@@ -1,15 +1,15 @@
-import React from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
-import Layout from '@/components/Layout';
-import Dashboard from '@/pages/Dashboard';
-import Courses from '@/pages/Courses';
-import Planner from '@/pages/Planner';
-import Community from '@/pages/Community';
-import Settings from '@/pages/Settings';
-import Summarizer from '@/pages/Summarizer';
-import Reminders from '@/pages/Reminders';
-import Upload from '@/pages/Upload';
-import { AnimatePresence } from 'framer-motion';
+import React from "react";
+import { Routes, Route, useLocation } from "react-router-dom";
+import Layout from "@/components/Layout";
+import Dashboard from "@/pages/Dashboard";
+import Courses from "@/pages/Courses";
+import Planner from "@/pages/Planner";
+import Community from "@/pages/Community";
+import Settings from "@/pages/Settings";
+import Summarizer from "@/pages/Summarizer";
+import Reminders from "@/pages/Reminders";
+import Upload from "@/pages/Upload";
+import { AnimatePresence } from "framer-motion";
 
 function App() {
   const location = useLocation();
