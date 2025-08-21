@@ -12,7 +12,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useAuth } from "@/contexts/SupabaseAuthContext";
 import { Bot, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -20,33 +19,32 @@ const AuthPage = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const { signIn, signUp } = useAuth();
   const { toast } = useToast();
 
+  // Dummy sign in handler
   const handleSignIn = async (e) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await signIn(email, password);
-    if (!error) {
+    setTimeout(() => {
+      setLoading(false);
       toast({
-        title: "🎉 Welcome back!",
-        description: "You have successfully signed in.",
+        title: "🎉 Signed in (Demo)",
+        description: "This is a demo sign-in. No authentication performed.",
       });
-    }
-    setLoading(false);
+    }, 1000);
   };
 
+  // Dummy sign up handler
   const handleSignUp = async (e) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await signUp(email, password);
-    if (!error) {
+    setTimeout(() => {
+      setLoading(false);
       toast({
-        title: "✅ Account created!",
-        description: "Please check your email for a verification link.",
+        title: "✅ Account created (Demo)",
+        description: "This is a demo sign-up. No authentication performed.",
       });
-    }
-    setLoading(false);
+    }, 1000);
   };
 
   return (
@@ -132,6 +130,17 @@ const AuthPage = () => {
                 </CardHeader>
                 <CardContent>
                   <form onSubmit={handleSignUp} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="name-signup">Name</Label>
+                      <Input
+                        id="name-signup"
+                        type="text"
+                        placeholder="Your Name"
+                        required
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                      />
+                    </div>
                     <div className="space-y-2">
                       <Label htmlFor="email-signup">Email</Label>
                       <Input
