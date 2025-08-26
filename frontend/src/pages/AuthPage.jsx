@@ -14,37 +14,84 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Bot, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import axios from "axios";
+
+// Use env var when available; fallback to localhost
+const API_BASE =
+  import.meta?.env?.VITE_API_URL?.replace(/\/+$/, "") ||
+  "http://localhost:3001";
+
+// A tiny axios instance so headers/CORS are consistent
+const http = axios.create({
+  baseURL: API_BASE,
+  withCredentials: false, // set true only if you use http-only cookies
+  headers: { "Content-Type": "application/json", Accept: "application/json" },
+});
 
 const AuthPage = () => {
+  const [tab, setTab] = useState("signin");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
-  // Dummy sign in handler
+  const friendlyError = (err, fallback = "Something went wrong") => {
+    const isHtml =
+      err?.response?.headers?.["content-type"]?.includes("text/html");
+    if (isHtml) return "Server crashed while handling your request (500).";
+    return err?.response?.data?.message || err?.message || fallback;
+  };
+
   const handleSignIn = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+    try {
+      const { data } = await http.post("/auth/login", { email, password });
+      // Save token if you want protected routes later:
+      // localStorage.setItem("accessToken", data.accessToken);
       toast({
-        title: "🎉 Signed in (Demo)",
-        description: "This is a demo sign-in. No authentication performed.",
+        title: "Welcome back 👋",
+        description: `Logged in as ${data.user.email}`,
       });
-    }, 1000);
+      // TODO: navigate to dashboard
+    } catch (err) {
+      toast({
+        title: "Login failed",
+        description: friendlyError(
+          err,
+          "Check your credentials and try again."
+        ),
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // Dummy sign up handler
   const handleSignUp = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+    try {
+      await http.post("/auth/register", { name, email, password });
       toast({
-        title: "✅ Account created (Demo)",
-        description: "This is a demo sign-up. No authentication performed.",
+        title: "Account created",
+        description: "You can now sign in with your new account.",
       });
-    }, 1000);
+      setTab("signin");
+      setPassword("");
+    } catch (err) {
+      toast({
+        title: "Sign up failed",
+        description: friendlyError(
+          err,
+          "Unable to create your account right now."
+        ),
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -53,18 +100,14 @@ const AuthPage = () => {
         <title>Authentication | LearnAI</title>
         <meta name="description" content="Sign in or create an account." />
       </Helmet>
+
       <div className="flex items-center justify-center min-h-screen bg-background relative overflow-hidden">
         <motion.div
           className="absolute inset-0 z-0 aurora-bg"
-          animate={{
-            backgroundPosition: ["0% 50%", "100% 50%", "0% 50%"],
-          }}
-          transition={{
-            duration: 40,
-            ease: "linear",
-            repeat: Infinity,
-          }}
+          animate={{ backgroundPosition: ["0% 50%", "100% 50%", "0% 50%"] }}
+          transition={{ duration: 40, ease: "linear", repeat: Infinity }}
         />
+
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -74,11 +117,14 @@ const AuthPage = () => {
           <div className="flex justify-center mb-8">
             <Bot className="h-16 w-16 text-primary" />
           </div>
-          <Tabs defaultValue="signin" className="w-[400px]">
+
+          <Tabs value={tab} onValueChange={setTab} className="w-[400px]">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="signin">Sign In</TabsTrigger>
               <TabsTrigger value="signup">Sign Up</TabsTrigger>
             </TabsList>
+
+            {/* Sign In */}
             <TabsContent value="signin">
               <Card className="glassmorphic-card">
                 <CardHeader>
@@ -120,12 +166,14 @@ const AuthPage = () => {
                 </CardContent>
               </Card>
             </TabsContent>
+
+            {/* Sign Up */}
             <TabsContent value="signup">
               <Card className="glassmorphic-card">
                 <CardHeader>
                   <CardTitle>Create an Account</CardTitle>
                   <CardDescription>
-                    Enter your email and password to get started.
+                    Enter your details to get started.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
