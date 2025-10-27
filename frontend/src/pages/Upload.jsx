@@ -37,24 +37,20 @@ function formatBytes(bytes, decimals = 2) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 }
 
-// File types your backend MVP parses best:
 const STRONG_TYPES = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
 ];
-
-// Allow some extras but warn:
 const EXTRA_TYPES = [
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation", // .pptx
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   "image/jpeg",
   "image/png",
 ];
-
 const MAX_SIZE = 25 * 1024 * 1024; // 25MB
 
 const Upload = () => {
   const { toast } = useToast();
-  const [files, setFiles] = useState([]); // [{file, progress, status, result}]
+  const [files, setFiles] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
 
   /* ---------- Dropzone ---------- */
@@ -63,12 +59,11 @@ const Upload = () => {
       const next = acceptedFiles.map((f) => ({
         file: f,
         progress: 0,
-        status: "ready", // ready | uploading | done | error
+        status: "ready",
         result: null,
         error: null,
       }));
 
-      // validations
       next.forEach((item) => {
         if (item.file.size > MAX_SIZE) {
           item.status = "error";
@@ -84,13 +79,12 @@ const Upload = () => {
 
       setFiles((prev) => [...prev, ...next]);
 
-      // Heads up for PPTX/images
       const hasExtra = next.some((i) => EXTRA_TYPES.includes(i.file.type));
       if (hasExtra) {
         toast({
-          title: "Heads up",
+          title: "Heads up ⚠️",
           description:
-            "PPTX/images will upload, but the MVP parser works best with PDF/DOCX.",
+            "PPTX/images will upload, but only PDF/DOCX are fully processed.",
         });
       }
     },
@@ -154,14 +148,14 @@ const Upload = () => {
             return clone;
           });
         },
-        timeout: 60_000,
+        timeout: 60000,
       });
 
       setFiles((arr) => {
         const clone = [...arr];
         if (clone[idx]) {
           clone[idx].status = "done";
-          clone[idx].result = res.data; // { document, topicsCount }
+          clone[idx].result = res.data;
           clone[idx].progress = 100;
         }
         return clone;
@@ -174,6 +168,16 @@ const Upload = () => {
           topicsCount ?? 0
         }`,
       });
+
+      // 🔥 Notify dashboard to refresh topics
+      if (document?._id) {
+        localStorage.setItem("lastUploadedDocId", document._id);
+        window.dispatchEvent(
+          new CustomEvent("last-uploaded-doc", {
+            detail: { docId: document._id },
+          })
+        );
+      }
     } catch (err) {
       const msg =
         err?.response?.data?.message ||
@@ -210,19 +214,15 @@ const Upload = () => {
     }
 
     setIsUploading(true);
-    // Upload sequentially for simpler progress/ordering (you can parallelize later)
     for (const item of ready) {
-      // stop if user cleared list
       if (!files[item.idx]) break;
-      // skip invalid
       if (item.error) continue;
-      // upload
-      /* eslint-disable no-await-in-loop */
       await uploadOne(item.idx);
     }
     setIsUploading(false);
   };
 
+  /* ---------- UI ---------- */
   return (
     <>
       <Helmet>
@@ -356,7 +356,6 @@ const Upload = () => {
                         </div>
                       </div>
 
-                      {/* Progress bar */}
                       {status === "uploading" && (
                         <div className="w-full h-2 bg-black/20 rounded mt-2 overflow-hidden">
                           <div
@@ -366,7 +365,6 @@ const Upload = () => {
                         </div>
                       )}
 
-                      {/* Error or result */}
                       {bad && (
                         <p className="text-xs text-destructive mt-2">{error}</p>
                       )}

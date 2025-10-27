@@ -6,13 +6,11 @@ const topicSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Document",
       index: true,
+      required: true,
     },
-    title: String,
-    sectionText: String,
-    difficulty: { type: Number, min: 1, max: 5, default: 3 },
-    estMinutes: { type: Number, default: 8 },
-    order: Number,
-    keywords: [String],
+    title: { type: String, required: true },
+    summary: { type: String },
+    order: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

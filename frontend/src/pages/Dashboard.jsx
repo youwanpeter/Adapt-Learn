@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { Helmet } from "react-helmet";
 import { motion } from "framer-motion";
 import {
@@ -31,27 +31,29 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { useNavigate } from "react-router-dom";
+import axios from "axios";
+
+/* ---------- API base resolver (adds /api exactly once) ---------- */
+const resolveApiBase = () => {
+  const raw =
+    (typeof import.meta !== "undefined" &&
+      import.meta.env &&
+      import.meta.env.VITE_API_URL &&
+      String(import.meta.env.VITE_API_URL).trim()) ||
+    "http://127.0.0.1:4000";
+  const base = raw.replace(/\/+$/, "");
+  return /\/api$/.test(base) ? base : `${base}/api`;
+};
+const API_BASE = resolveApiBase();
+const http = axios.create({ baseURL: API_BASE, timeout: 15000 });
 
 const containerVariants = {
   hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.1,
-    },
-  },
+  visible: { opacity: 1, transition: { staggerChildren: 0.1 } },
 };
-
 const itemVariants = {
   hidden: { y: 20, opacity: 0 },
-  visible: {
-    y: 0,
-    opacity: 1,
-    transition: {
-      type: "spring",
-      stiffness: 100,
-    },
-  },
+  visible: { y: 0, opacity: 1, transition: { type: "spring", stiffness: 100 } },
 };
 
 const videoRecommendations = [
@@ -72,13 +74,95 @@ const Dashboard = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  const showToast = () => {
+  /* ---------- Topics from latest document ---------- */
+  const token =
+    localStorage.getItem("accessToken") || localStorage.getItem("token");
+  const authHeader = useMemo(
+    () => (token ? { Authorization: `Bearer ${token}` } : {}),
+    [token]
+  );
+
+  const [topicsLoading, setTopicsLoading] = useState(false);
+  const [topicsError, setTopicsError] = useState("");
+  const [latestDoc, setLatestDoc] = useState(null);
+  const [topics, setTopics] = useState([]);
+  const [topicsOpen, setTopicsOpen] = useState(false);
+
+  const fetchLatestDocAndTopics = useCallback(async () => {
+    if (!token) {
+      setLatestDoc(null);
+      setTopics([]);
+      return;
+    }
+    setTopicsLoading(true);
+    setTopicsError("");
+    try {
+      // 1) fetch my docs (assume backend sorts desc; if not, sort here)
+      const { data: docs } = await http.get("/documents/mine", {
+        headers: authHeader,
+      });
+      const latest = Array.isArray(docs) && docs.length ? docs[0] : null;
+
+      if (!latest) {
+        setLatestDoc(null);
+        setTopics([]);
+        setTopicsLoading(false);
+        return;
+      }
+
+      // 2) fetch topics for that doc
+      const { data: t } = await http.get(`/topics/by-document/${latest._id}`, {
+        headers: authHeader,
+      });
+
+      setLatestDoc(latest);
+      setTopics(Array.isArray(t) ? t : t?.topics || []);
+    } catch (e) {
+      const msg =
+        e?.response?.data?.message || e?.message || "Failed to load topics.";
+      setTopicsError(msg);
+      setLatestDoc(null);
+      setTopics([]);
+      toast({
+        title: "Couldn’t load topics",
+        description: msg,
+        variant: "destructive",
+      });
+    } finally {
+      setTopicsLoading(false);
+    }
+  }, [authHeader, token, toast]);
+
+  // Initial load
+  useEffect(() => {
+    fetchLatestDocAndTopics();
+  }, [fetchLatestDocAndTopics]);
+
+  // React to new uploads (Upload.jsx dispatches 'last-uploaded-doc')
+  useEffect(() => {
+    const onNewDoc = () => {
+      // Clear immediately for UX then refetch
+      setLatestDoc(null);
+      setTopics([]);
+      fetchLatestDocAndTopics();
+    };
+    window.addEventListener("last-uploaded-doc", onNewDoc);
+    const onStorage = (ev) => {
+      if (ev.key === "lastUploadedDocId") onNewDoc();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("last-uploaded-doc", onNewDoc);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [fetchLatestDocAndTopics]);
+
+  const showToast = () =>
     toast({
       title: "🚧 Feature not implemented",
       description:
         "This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
     });
-  };
 
   return (
     <>
@@ -89,6 +173,7 @@ const Dashboard = () => {
           content="Your personalized learning dashboard."
         />
       </Helmet>
+
       <motion.div
         variants={containerVariants}
         initial="hidden"
@@ -132,25 +217,87 @@ const Dashboard = () => {
               <Progress value={75} className="mt-4 h-2" />
             </CardContent>
           </Card>
+
+          {/* Topics to Review (wired to latest doc) */}
           <Card className="glassmorphic-card">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle>Topics to Review</CardTitle>
               <Lightbulb className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">3</div>
+              <div className="text-2xl font-bold">
+                {topicsLoading ? "—" : topics.length}
+              </div>
               <p className="text-xs text-muted-foreground">
-                Based on spaced repetition
+                {topicsLoading
+                  ? "Loading from your latest document..."
+                  : latestDoc
+                  ? `From: ${latestDoc.originalName || latestDoc._id}`
+                  : token
+                  ? "Upload a document to see extracted topics"
+                  : "Sign in to view topics"}
               </p>
-              <Button
-                variant="link"
-                className="p-0 mt-2 h-auto text-primary"
-                onClick={showToast}
-              >
-                View Topics <ArrowRight className="ml-1 h-4 w-4" />
-              </Button>
+
+              {/* View topics dialog */}
+              <Dialog open={topicsOpen} onOpenChange={setTopicsOpen}>
+                <DialogTrigger asChild>
+                  <Button
+                    variant="link"
+                    className="p-0 mt-2 h-auto text-primary"
+                    disabled={!topics.length || topicsLoading}
+                  >
+                    View Topics <ArrowRight className="ml-1 h-4 w-4" />
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Extracted Topics</DialogTitle>
+                    <DialogDescription>
+                      {latestDoc
+                        ? latestDoc.originalName || latestDoc._id
+                        : "Latest document"}
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  {topicsLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading…</p>
+                  ) : topics.length ? (
+                    <ul className="space-y-2 max-h-80 overflow-auto">
+                      {topics.map((t) => (
+                        <li
+                          key={t._id || t.title}
+                          className="p-3 rounded-md bg-secondary/50"
+                        >
+                          <div className="font-medium text-sm">
+                            {t.title || t.name}
+                          </div>
+                          {t.summary && (
+                            <div className="text-xs text-muted-foreground mt-1">
+                              {t.summary}
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No topics found.
+                    </p>
+                  )}
+
+                  <DialogFooter>
+                    <Button
+                      variant="secondary"
+                      onClick={fetchLatestDocAndTopics}
+                    >
+                      Refresh
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </CardContent>
           </Card>
+
           <Card className="glassmorphic-card md:col-span-2 lg:col-span-1">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle>Next Milestone</CardTitle>
@@ -202,10 +349,13 @@ const Dashboard = () => {
                   </DialogHeader>
                   <Textarea placeholder="Paste your text here..." rows={10} />
                   <DialogFooter>
-                    <Button onClick={showToast}>Summarize</Button>
+                    <Button onClick={() => toast({ title: "Coming soon ✨" })}>
+                      Summarize
+                    </Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
+
               <motion.div
                 whileHover={{ scale: 1.05 }}
                 onClick={() => navigate("/planner")}
@@ -217,9 +367,10 @@ const Dashboard = () => {
                   Manage your tasks
                 </p>
               </motion.div>
+
               <motion.div
                 whileHover={{ scale: 1.05 }}
-                onClick={showToast}
+                onClick={() => toast({ title: "Coming soon ✨" })}
                 className="flex flex-col items-center justify-center p-4 bg-secondary/50 hover:bg-secondary rounded-lg cursor-pointer text-center"
               >
                 <Video className="h-8 w-8 text-primary mb-2" />
@@ -261,7 +412,7 @@ const Dashboard = () => {
                 <motion.div
                   key={index}
                   whileHover={{ y: -5 }}
-                  onClick={showToast}
+                  onClick={() => toast({ title: "Coming soon ✨" })}
                   className="bg-secondary/50 p-4 rounded-lg cursor-pointer"
                 >
                   <div className="aspect-video bg-muted rounded-md mb-3 flex items-center justify-center">

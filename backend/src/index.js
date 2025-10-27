@@ -27,7 +27,7 @@ import authRoutes from "./routes/auth.routes.js";
 import healthRoutes from "./routes/health.routes.js";
 import { notFound, errorHandler } from "./middleware/error.js";
 import docRoutes from "./routes/documents.routes.js";
-//import topicRoutes from "./routes/topics.routes.js";
+import topicRoutes from "./routes/topics.routes.js";
 
 // --- App setup ---
 const app = express();
@@ -52,7 +52,7 @@ app.use("/api/auth", authRoutes);
 
 // import studyRoutes from "./routes/study.routes.js";
 app.use("/api/documents", docRoutes);
-//app.use("/api/topics", topicRoutes);
+app.use("/api/topics", topicRoutes);
 // app.use("/api/study", studyRoutes);
 
 // --- 404 + error handler ---
