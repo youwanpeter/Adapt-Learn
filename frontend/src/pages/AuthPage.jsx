@@ -17,20 +17,59 @@ import { useToast } from "@/components/ui/use-toast";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
-// Use env var when available; fallback to localhost (no TS-only syntax)
-const API_BASE =
-  (typeof import.meta !== "undefined" &&
-    import.meta.env &&
-    import.meta.env.VITE_API_URL &&
-    import.meta.env.VITE_API_URL.replace(/\/+$/, "")) ||
-  "http://localhost:3001";
+/* ---------- API base resolver (always ensures one /api) ---------- */
+const resolveApiBase = () => {
+  const raw =
+    (typeof import.meta !== "undefined" &&
+      import.meta.env &&
+      import.meta.env.VITE_API_URL &&
+      String(import.meta.env.VITE_API_URL).trim()) ||
+    "http://localhost:4000";
+  const noTrail = raw.replace(/\/+$/, "");
+  return /\/api$/.test(noTrail) ? noTrail : `${noTrail}/api`;
+};
 
-// Small axios instance
+const API_BASE = resolveApiBase();
+
+/* ---------- Axios instance ---------- */
 const http = axios.create({
   baseURL: API_BASE,
   withCredentials: false, // set true only if you use http-only cookies
   headers: { "Content-Type": "application/json", Accept: "application/json" },
+  timeout: 10000,
 });
+
+// Dev visibility
+if (import.meta.env?.DEV) {
+  // eslint-disable-next-line no-console
+  console.log("AuthPage using API_BASE:", API_BASE);
+}
+
+/* Helpful network-aware error message */
+const normalizeError = (err, fallback = "Something went wrong") => {
+  // Axios network error (server not running, wrong port, CORS preflight blocked at network layer)
+  if (!err.response) {
+    // eslint-disable-next-line no-console
+    console.error("Network/connection error:", err);
+    return `Cannot reach API at ${API_BASE}. Is the backend running? (${
+      err.code || "NETWORK"
+    })`;
+  }
+  const isHtml =
+    err?.response?.headers?.["content-type"]?.includes?.("text/html");
+  if (isHtml) return "Server crashed while handling your request (500).";
+  return err?.response?.data?.message || err?.message || fallback;
+};
+
+// Optional health check before we send auth requests (fast fail)
+const pingHealth = async () => {
+  try {
+    await http.get("/health", { timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const AuthPage = () => {
   const [tab, setTab] = useState("signin");
@@ -41,20 +80,14 @@ const AuthPage = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  const friendlyError = (err, fallback = "Something went wrong") => {
-    const isHtml =
-      err?.response?.headers?.["content-type"]?.includes?.("text/html");
-    if (isHtml) return "Server crashed while handling your request (500).";
-    return err?.response?.data?.message || err?.message || fallback;
-  };
-
-  // Store tokens in a way that works with the rest of your app (supports both keys)
+  // Save token + prime axios for subsequent authorized requests
   const persistSession = (data) => {
     if (!data) return;
     const token = data.accessToken || data.token;
     if (token) {
       localStorage.setItem("accessToken", token);
-      localStorage.setItem("token", token); // many routers check this
+      localStorage.setItem("token", token);
+      http.defaults.headers.common.Authorization = `Bearer ${token}`;
     }
     if (data.user) localStorage.setItem("user", JSON.stringify(data.user));
   };
@@ -63,18 +96,24 @@ const AuthPage = () => {
     e.preventDefault();
     setLoading(true);
     try {
+      const ok = await pingHealth();
+      if (!ok) {
+        throw new Error(
+          `API not reachable at ${API_BASE}. Start backend or fix VITE_API_URL.`
+        );
+      }
+      // POST /api/auth/login -> { token, user }
       const { data } = await http.post("/auth/login", { email, password });
       persistSession(data);
       toast({
         title: "Welcome back 👋",
         description: `Logged in as ${data?.user?.email || email}`,
       });
-      // ⚠️ Use the exact route casing you defined elsewhere
-      navigate("/Dashboard"); // redirect after login only
+      navigate("/dashboard"); // adjust if your route differs
     } catch (err) {
       toast({
         title: "Login failed",
-        description: friendlyError(
+        description: normalizeError(
           err,
           "Check your credentials and try again."
         ),
@@ -85,24 +124,28 @@ const AuthPage = () => {
     }
   };
 
-  // ✅ Sign-up no longer auto-logs in or redirects
+  // Sign-up does NOT auto-login; it swaps to Sign In
   const handleSignUp = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
+      const ok = await pingHealth();
+      if (!ok) {
+        throw new Error(
+          `API not reachable at ${API_BASE}. Start backend or fix VITE_API_URL.`
+        );
+      }
+      // POST /api/auth/register -> 201/200
       await http.post("/auth/register", { name, email, password });
-
       toast({
         title: "Account created 🎉",
         description: "You can now sign in with your credentials.",
       });
-
-      // Switch to Sign In tab; keep email so user just types password again
       setTab("signin");
     } catch (err) {
       toast({
         title: "Sign up failed",
-        description: friendlyError(
+        description: normalizeError(
           err,
           "Unable to create your account right now."
         ),
@@ -173,6 +216,7 @@ const AuthPage = () => {
                         required
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
+                        autoComplete="email"
                       />
                     </div>
                     <div className="space-y-2">
@@ -184,6 +228,7 @@ const AuthPage = () => {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         minLength={6}
+                        autoComplete="current-password"
                       />
                     </div>
                     <Button
@@ -221,6 +266,7 @@ const AuthPage = () => {
                         required
                         value={name}
                         onChange={(e) => setName(e.target.value)}
+                        autoComplete="name"
                       />
                     </div>
                     <div className="space-y-2">
@@ -232,6 +278,7 @@ const AuthPage = () => {
                         required
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
+                        autoComplete="email"
                       />
                     </div>
                     <div className="space-y-2">
@@ -243,6 +290,7 @@ const AuthPage = () => {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         minLength={6}
+                        autoComplete="new-password"
                       />
                     </div>
                     <Button

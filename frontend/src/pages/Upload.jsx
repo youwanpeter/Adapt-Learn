@@ -1,145 +1,391 @@
-import React, { useState, useCallback } from 'react';
-import { Helmet } from 'react-helmet';
-import { useDropzone } from 'react-dropzone';
-import { motion } from 'framer-motion';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import React, { useState, useCallback } from "react";
+import { Helmet } from "react-helmet";
+import { useDropzone } from "react-dropzone";
+import { motion } from "framer-motion";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
-import { UploadCloud, File, X, Loader2 } from 'lucide-react';
+import { UploadCloud, File as FileIcon, X, Loader2 } from "lucide-react";
+import axios from "axios";
 
+/* ---------- API base resolver (adds /api exactly once) ---------- */
+const resolveApiBase = () => {
+  const raw =
+    (typeof import.meta !== "undefined" &&
+      import.meta.env &&
+      import.meta.env.VITE_API_URL &&
+      String(import.meta.env.VITE_API_URL).trim()) ||
+    "http://127.0.0.1:4000";
+  const base = raw.replace(/\/+$/, "");
+  return /\/api$/.test(base) ? base : `${base}/api`;
+};
+const API_BASE = resolveApiBase();
+
+/* ---------- Helpers ---------- */
 function formatBytes(bytes, decimals = 2) {
-  if (bytes === 0) return '0 Bytes';
+  if (bytes === 0) return "0 Bytes";
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 }
 
+// File types your backend MVP parses best:
+const STRONG_TYPES = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+];
+
+// Allow some extras but warn:
+const EXTRA_TYPES = [
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation", // .pptx
+  "image/jpeg",
+  "image/png",
+];
+
+const MAX_SIZE = 25 * 1024 * 1024; // 25MB
+
 const Upload = () => {
-    const { toast } = useToast();
-    const [files, setFiles] = useState([]);
-    const [isProcessing, setIsProcessing] = useState(false);
+  const { toast } = useToast();
+  const [files, setFiles] = useState([]); // [{file, progress, status, result}]
+  const [isUploading, setIsUploading] = useState(false);
 
-    const onDrop = useCallback((acceptedFiles) => {
-        setFiles(prevFiles => [...prevFiles, ...acceptedFiles]);
-    }, []);
+  /* ---------- Dropzone ---------- */
+  const onDrop = useCallback(
+    (acceptedFiles) => {
+      const next = acceptedFiles.map((f) => ({
+        file: f,
+        progress: 0,
+        status: "ready", // ready | uploading | done | error
+        result: null,
+        error: null,
+      }));
 
-    const { getRootProps, getInputProps, isDragActive } = useDropzone({
-        onDrop,
-        accept: {
-            'application/pdf': ['.pdf'],
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
-            'image/jpeg': [],
-            'image/png': [],
+      // validations
+      next.forEach((item) => {
+        if (item.file.size > MAX_SIZE) {
+          item.status = "error";
+          item.error = `File too large (>${formatBytes(MAX_SIZE)})`;
+        } else if (
+          !STRONG_TYPES.includes(item.file.type) &&
+          !EXTRA_TYPES.includes(item.file.type)
+        ) {
+          item.status = "error";
+          item.error = "Unsupported file type";
         }
+      });
+
+      setFiles((prev) => [...prev, ...next]);
+
+      // Heads up for PPTX/images
+      const hasExtra = next.some((i) => EXTRA_TYPES.includes(i.file.type));
+      if (hasExtra) {
+        toast({
+          title: "Heads up",
+          description:
+            "PPTX/images will upload, but the MVP parser works best with PDF/DOCX.",
+        });
+      }
+    },
+    [toast]
+  );
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: {
+      "application/pdf": [".pdf"],
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        [".docx"],
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+        [".pptx"],
+      "image/jpeg": [".jpg", ".jpeg"],
+      "image/png": [".png"],
+    },
+    maxSize: MAX_SIZE,
+  });
+
+  /* ---------- Actions ---------- */
+  const removeFile = (idx) =>
+    setFiles((arr) => arr.filter((_, i) => i !== idx));
+
+  const clearAll = () => setFiles([]);
+
+  const uploadOne = async (idx) => {
+    const token =
+      localStorage.getItem("accessToken") || localStorage.getItem("token");
+    if (!token) {
+      toast({
+        title: "Not signed in",
+        description: "Please log in first to upload documents.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setFiles((arr) => {
+      const clone = [...arr];
+      clone[idx].status = "uploading";
+      clone[idx].progress = 0;
+      clone[idx].error = null;
+      return clone;
     });
 
-    const removeFile = (file) => {
-        setFiles(files.filter(f => f !== file));
-    };
+    const form = new FormData();
+    form.append("file", files[idx].file);
 
-    const handleProcessFiles = () => {
-        if (files.length === 0) {
-            toast({
-                title: "No files selected",
-                description: "Please upload at least one file to process.",
-                variant: "destructive"
-            });
-            return;
+    try {
+      const res = await axios.post(`${API_BASE}/documents/upload`, form, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        onUploadProgress: (e) => {
+          if (!e.total) return;
+          const pct = Math.round((e.loaded * 100) / e.total);
+          setFiles((arr) => {
+            const clone = [...arr];
+            if (clone[idx]) clone[idx].progress = pct;
+            return clone;
+          });
+        },
+        timeout: 60_000,
+      });
+
+      setFiles((arr) => {
+        const clone = [...arr];
+        if (clone[idx]) {
+          clone[idx].status = "done";
+          clone[idx].result = res.data; // { document, topicsCount }
+          clone[idx].progress = 100;
         }
-        setIsProcessing(true);
-        toast({
-            title: "🚀 Processing files...",
-            description: "This feature isn't implemented yet, but your files are ready!",
-        });
-        setTimeout(() => {
-            setIsProcessing(false);
-        }, 2000);
-    };
+        return clone;
+      });
 
-    return (
-        <>
-            <Helmet>
-                <title>Upload Documents | LearnAI</title>
-                <meta name="description" content="Upload your course materials for processing." />
-            </Helmet>
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
-                className="space-y-8"
+      const { document, topicsCount } = res.data || {};
+      toast({
+        title: "Uploaded ✅",
+        description: `Saved "${files[idx].file.name}" • Topics: ${
+          topicsCount ?? 0
+        }`,
+      });
+    } catch (err) {
+      const msg =
+        err?.response?.data?.message ||
+        err?.message ||
+        "Upload failed. Check the server.";
+      setFiles((arr) => {
+        const clone = [...arr];
+        if (clone[idx]) {
+          clone[idx].status = "error";
+          clone[idx].error = msg;
+        }
+        return clone;
+      });
+      toast({
+        title: "Upload failed",
+        description: msg,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleProcessFiles = async () => {
+    const ready = files
+      .map((f, i) => ({ ...f, idx: i }))
+      .filter((f) => f.status === "ready");
+
+    if (ready.length === 0) {
+      toast({
+        title: "Nothing to upload",
+        description: "Add files or remove ones that errored.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsUploading(true);
+    // Upload sequentially for simpler progress/ordering (you can parallelize later)
+    for (const item of ready) {
+      // stop if user cleared list
+      if (!files[item.idx]) break;
+      // skip invalid
+      if (item.error) continue;
+      // upload
+      /* eslint-disable no-await-in-loop */
+      await uploadOne(item.idx);
+    }
+    setIsUploading(false);
+  };
+
+  return (
+    <>
+      <Helmet>
+        <title>Upload Documents | LearnAI</title>
+        <meta
+          name="description"
+          content="Upload your course materials for processing."
+        />
+      </Helmet>
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="space-y-8"
+      >
+        <div className="text-center">
+          <h1 className="text-4xl font-bold mb-2 text-white">
+            Upload Your Materials
+          </h1>
+          <p className="text-muted-foreground max-w-2xl mx-auto">
+            Drag and drop your documents here. We support PDF, DOCX, PPTX, and
+            image files.
+          </p>
+        </div>
+
+        <Card className="glassmorphic-card max-w-3xl mx-auto">
+          <CardContent className="p-6">
+            <div
+              {...getRootProps()}
+              className={`border-2 border-dashed rounded-lg p-12 text-center cursor-pointer transition-colors duration-300 ${
+                isDragActive
+                  ? "border-primary bg-primary/10"
+                  : "border-white/20 hover:border-primary"
+              }`}
             >
-                <div className="text-center">
-                    <h1 className="text-4xl font-bold mb-2 text-white">Upload Your Materials</h1>
-                    <p className="text-muted-foreground max-w-2xl mx-auto">
-                        Drag and drop your documents here. We support PDF, DOCX, PPTX, and image files.
-                    </p>
-                </div>
+              <input {...getInputProps()} />
+              <motion.div
+                animate={{ y: [0, -5, 0] }}
+                transition={{ repeat: Infinity, duration: 1.5 }}
+                className="flex justify-center mb-4"
+              >
+                <UploadCloud className="w-16 h-16 text-primary" />
+              </motion.div>
+              {isDragActive ? (
+                <p className="font-semibold">Drop the files here ...</p>
+              ) : (
+                <p className="font-semibold">
+                  Drag 'n' drop some files here, or click to select files
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground mt-2">
+                Supported formats: PDF, DOCX, PPTX, JPG, PNG (25MB max each)
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
-                <Card className="glassmorphic-card max-w-3xl mx-auto">
-                    <CardContent className="p-6">
-                        <div
-                            {...getRootProps()}
-                            className={`border-2 border-dashed rounded-lg p-12 text-center cursor-pointer transition-colors duration-300 ${isDragActive ? 'border-primary bg-primary/10' : 'border-white/20 hover:border-primary'}`}
-                        >
-                            <input {...getInputProps()} />
-                            <motion.div
-                                animate={{ y: [0, -5, 0] }}
-                                transition={{ repeat: Infinity, duration: 1.5 }}
-                                className="flex justify-center mb-4"
-                            >
-                                <UploadCloud className="w-16 h-16 text-primary" />
-                            </motion.div>
-                            {
-                                isDragActive ?
-                                    <p className="font-semibold">Drop the files here ...</p> :
-                                    <p className="font-semibold">Drag 'n' drop some files here, or click to select files</p>
-                            }
-                            <p className="text-xs text-muted-foreground mt-2">Supported formats: PDF, DOCX, PPTX, JPG, PNG</p>
+        {files.length > 0 && (
+          <Card className="glassmorphic-card max-w-3xl mx-auto">
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle>Uploaded Files</CardTitle>
+                <CardDescription>Review and upload.</CardDescription>
+              </div>
+              <div className="space-x-2">
+                <Button
+                  variant="secondary"
+                  onClick={handleProcessFiles}
+                  disabled={isUploading}
+                >
+                  {isUploading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : null}
+                  {isUploading
+                    ? "Uploading..."
+                    : `Upload ${
+                        files.filter((f) => f.status === "ready").length
+                      } file(s)`}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={clearAll}
+                  disabled={isUploading}
+                >
+                  Clear
+                </Button>
+              </div>
+            </CardHeader>
+
+            <CardContent>
+              <div className="space-y-3">
+                {files.map((item, index) => {
+                  const { file, status, progress, error, result } = item;
+                  const ok = status === "done";
+                  const bad = status === "error";
+                  return (
+                    <motion.div
+                      key={`${file.name}-${index}`}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className="p-3 bg-secondary/50 rounded-lg"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3 overflow-hidden">
+                          <FileIcon className="w-5 h-5 flex-shrink-0" />
+                          <div className="overflow-hidden">
+                            <p className="font-medium truncate text-sm">
+                              {file.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatBytes(file.size)} •{" "}
+                              {file.type || "unknown"}
+                            </p>
+                          </div>
                         </div>
-                    </CardContent>
-                </Card>
-                
-                {files.length > 0 && (
-                    <Card className="glassmorphic-card max-w-3xl mx-auto">
-                        <CardHeader>
-                            <CardTitle>Uploaded Files</CardTitle>
-                            <CardDescription>Review your files before processing.</CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="space-y-3">
-                                {files.map((file, index) => (
-                                    <motion.div
-                                        key={index}
-                                        initial={{ opacity: 0, x: -20 }}
-                                        animate={{ opacity: 1, x: 0 }}
-                                        className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg"
-                                    >
-                                        <div className="flex items-center gap-3 overflow-hidden">
-                                            <File className="w-5 h-5 flex-shrink-0" />
-                                            <div className="flex-grow overflow-hidden">
-                                                <p className="font-medium truncate text-sm">{file.name}</p>
-                                                <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
-                                            </div>
-                                        </div>
-                                        <Button variant="ghost" size="icon" onClick={() => removeFile(file)}>
-                                            <X className="h-4 w-4 text-muted-foreground hover:text-destructive"/>
-                                        </Button>
-                                    </motion.div>
-                                ))}
-                            </div>
-                            <Button className="w-full mt-6" onClick={handleProcessFiles} disabled={isProcessing}>
-                                {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                                {isProcessing ? "Processing..." : `Process ${files.length} File(s)`}
-                            </Button>
-                        </CardContent>
-                    </Card>
-                )}
-            </motion.div>
-        </>
-    );
+
+                        <div className="flex items-center gap-2">
+                          {status === "uploading" && (
+                            <span className="text-xs">{progress}%</span>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removeFile(index)}
+                            disabled={status === "uploading"}
+                            title="Remove"
+                          >
+                            <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Progress bar */}
+                      {status === "uploading" && (
+                        <div className="w-full h-2 bg-black/20 rounded mt-2 overflow-hidden">
+                          <div
+                            className="h-2 bg-primary"
+                            style={{ width: `${progress}%` }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Error or result */}
+                      {bad && (
+                        <p className="text-xs text-destructive mt-2">{error}</p>
+                      )}
+                      {ok && result && (
+                        <p className="text-xs text-green-500 mt-2">
+                          Saved • Doc ID: {result?.document?._id || "—"} •
+                          Topics: {result?.topicsCount ?? 0}
+                        </p>
+                      )}
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </motion.div>
+    </>
+  );
 };
 
 export default Upload;
