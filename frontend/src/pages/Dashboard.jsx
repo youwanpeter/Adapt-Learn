@@ -70,6 +70,24 @@ const videoRecommendations = [
   },
 ];
 
+/* ---------- tiny date helpers ---------- */
+const fmtDate = (d) =>
+  new Date(d).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+const addDays = (d, n) => {
+  const nd = new Date(d);
+  nd.setDate(nd.getDate() + n);
+  return nd;
+};
+const daysDiff = (a, b) => {
+  const ms =
+    new Date(b).setHours(0, 0, 0, 0) - new Date(a).setHours(0, 0, 0, 0);
+  return Math.max(0, Math.round(ms / 86400000));
+};
+
 const Dashboard = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -97,7 +115,6 @@ const Dashboard = () => {
     setTopicsLoading(true);
     setTopicsError("");
     try {
-      // 1) fetch my docs (assume backend sorts desc; if not, sort here)
       const { data: docs } = await http.get("/documents/mine", {
         headers: authHeader,
       });
@@ -110,7 +127,6 @@ const Dashboard = () => {
         return;
       }
 
-      // 2) fetch topics for that doc
       const { data: t } = await http.get(`/topics/by-document/${latest._id}`, {
         headers: authHeader,
       });
@@ -141,7 +157,6 @@ const Dashboard = () => {
   // React to new uploads (Upload.jsx dispatches 'last-uploaded-doc')
   useEffect(() => {
     const onNewDoc = () => {
-      // Clear immediately for UX then refetch
       setLatestDoc(null);
       setTopics([]);
       fetchLatestDocAndTopics();
@@ -163,6 +178,92 @@ const Dashboard = () => {
       description:
         "This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
     });
+
+  /* ===================== STUDY PLANNER ===================== */
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  const [selected, setSelected] = useState({}); // {topicId: boolean}
+  const [pace, setPace] = useState("moderate"); // fast|moderate|slow
+  const [dueDate, setDueDate] = useState(() => {
+    const d = addDays(new Date(), 7);
+    return d.toISOString().slice(0, 10);
+  });
+  const [sessions, setSessions] = useState([]);
+  const [generating, setGenerating] = useState(false);
+
+  const toggleTopic = (id) => setSelected((s) => ({ ...s, [id]: !s[id] }));
+
+  const allSelectedTopics = useMemo(
+    () => topics.filter((t) => selected[t._id || t.title]),
+    [topics, selected]
+  );
+
+  const estimateMinutes = (t) => {
+    // Base on summary length; fallback 25
+    const words = (t?.summary || "").split(/\s+/).filter(Boolean).length;
+    let base = 25 + Math.min(35, Math.floor(words / 20)); // 25–60
+    const factor = pace === "fast" ? 0.75 : pace === "slow" ? 1.3 : 1.0;
+    return Math.max(10, Math.round(base * factor));
+  };
+
+  const generatePlan = () => {
+    if (!allSelectedTopics.length) {
+      toast({ title: "Pick at least one topic", variant: "destructive" });
+      return;
+    }
+    const start = new Date(); // today
+    const end = new Date(dueDate);
+    if (isNaN(end.getTime())) {
+      toast({ title: "Select a valid due date", variant: "destructive" });
+      return;
+    }
+    if (end < addDays(start, 0)) {
+      toast({ title: "Due date can’t be in the past", variant: "destructive" });
+      return;
+    }
+
+    setGenerating(true);
+
+    // Distribute one session per topic across days from start..dueDate
+    const spanDays = Math.max(1, daysDiff(start, end) + 1);
+    const count = allSelectedTopics.length;
+    const sessionsOut = [];
+    for (let i = 0; i < count; i++) {
+      const t = allSelectedTopics[i];
+      // Spread across the range
+      const dayIndex = Math.floor((i * spanDays) / count);
+      const date = addDays(start, dayIndex);
+      sessionsOut.push({
+        id: `${t._id || t.title}::${i}`,
+        date: date.toISOString(),
+        dateLabel: fmtDate(date),
+        topic: t.title || t.name,
+        minutes: estimateMinutes(t),
+      });
+    }
+
+    setSessions(sessionsOut);
+    setGenerating(false);
+  };
+
+  const savePlan = () => {
+    const payload = {
+      createdAt: new Date().toISOString(),
+      dueDate,
+      pace,
+      sessions,
+      sourceDocument: latestDoc?._id || null,
+      topics: allSelectedTopics.map((t) => t.title || t.name),
+    };
+    // For now, store locally; later swap to POST /api/planner
+    localStorage.setItem("studyPlan", JSON.stringify(payload));
+    toast({
+      title: "Study plan saved ✅",
+      description: `Sessions: ${sessions.length}`,
+    });
+    setPlannerOpen(false);
+    navigate("/planner"); // takes user to planner UI if you have it
+  };
+  /* ================== END STUDY PLANNER ==================== */
 
   return (
     <>
@@ -263,21 +364,36 @@ const Dashboard = () => {
                     <p className="text-sm text-muted-foreground">Loading…</p>
                   ) : topics.length ? (
                     <ul className="space-y-2 max-h-80 overflow-auto">
-                      {topics.map((t) => (
-                        <li
-                          key={t._id || t.title}
-                          className="p-3 rounded-md bg-secondary/50"
-                        >
-                          <div className="font-medium text-sm">
-                            {t.title || t.name}
-                          </div>
-                          {t.summary && (
-                            <div className="text-xs text-muted-foreground mt-1">
-                              {t.summary}
+                      {topics.map((t) => {
+                        const id = t._id || t.title;
+                        return (
+                          <li
+                            key={id}
+                            className="p-3 rounded-md bg-secondary/50"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="font-medium text-sm">
+                                  {t.title || t.name}
+                                </div>
+                                {t.summary && (
+                                  <div className="text-xs text-muted-foreground mt-1 line-clamp-3">
+                                    {t.summary}
+                                  </div>
+                                )}
+                              </div>
+                              {/* ==== STUDY PLANNER: per-topic checkbox ==== */}
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 ml-3"
+                                checked={!!selected[id]}
+                                onChange={() => toggleTopic(id)}
+                                title="Include in study plan"
+                              />
                             </div>
-                          )}
-                        </li>
-                      ))}
+                          </li>
+                        );
+                      })}
                     </ul>
                   ) : (
                     <p className="text-sm text-muted-foreground">
@@ -285,13 +401,125 @@ const Dashboard = () => {
                     </p>
                   )}
 
-                  <DialogFooter>
+                  <DialogFooter className="flex flex-col sm:flex-row sm:justify-between gap-2">
                     <Button
                       variant="secondary"
                       onClick={fetchLatestDocAndTopics}
                     >
                       Refresh
                     </Button>
+
+                    {/* ==== STUDY PLANNER: open planner dialog ==== */}
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button
+                          disabled={!topics.length}
+                          onClick={() => setPlannerOpen(true)}
+                        >
+                          📅 Create Study Plan
+                        </Button>
+                      </DialogTrigger>
+
+                      {/* Planner Dialog */}
+                      <DialogContent className="max-w-xl">
+                        <DialogHeader>
+                          <DialogTitle>Create Study Plan</DialogTitle>
+                          <DialogDescription>
+                            Choose pace & due date. We’ll generate dated
+                            sessions with estimated minutes.
+                          </DialogDescription>
+                        </DialogHeader>
+
+                        {/* Pace & Due date */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-sm font-medium">
+                              Study Pace
+                            </label>
+                            <select
+                              className="w-full p-2 mt-1 rounded bg-background border"
+                              value={pace}
+                              onChange={(e) => setPace(e.target.value)}
+                            >
+                              <option value="fast">
+                                Fast (shorter sessions)
+                              </option>
+                              <option value="moderate">
+                                Moderate (default)
+                              </option>
+                              <option value="slow">Slow (deeper study)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-sm font-medium">
+                              Due Date
+                            </label>
+                            <input
+                              type="date"
+                              className="w-full p-2 mt-1 rounded bg-background border"
+                              value={dueDate}
+                              onChange={(e) => setDueDate(e.target.value)}
+                              min={new Date().toISOString().slice(0, 10)}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Selected count */}
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Selected topics: {allSelectedTopics.length} /{" "}
+                          {topics.length}
+                        </p>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-2 mt-2">
+                          <Button
+                            onClick={generatePlan}
+                            disabled={generating || !allSelectedTopics.length}
+                          >
+                            {generating ? "Generating…" : "Generate Plan"}
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            disabled={!sessions.length}
+                            onClick={savePlan}
+                            title={
+                              sessions.length
+                                ? "Save & open planner"
+                                : "Generate a plan first"
+                            }
+                          >
+                            Save Plan
+                          </Button>
+                        </div>
+
+                        {/* Sessions preview */}
+                        <div className="mt-4 max-h-64 overflow-auto space-y-2">
+                          {sessions.length ? (
+                            sessions.map((s) => (
+                              <div
+                                key={s.id}
+                                className="p-3 rounded bg-secondary/50 text-sm flex justify-between"
+                              >
+                                <div className="pr-3">
+                                  <div className="font-medium">{s.topic}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    Est. {s.minutes} min
+                                  </div>
+                                </div>
+                                <div className="text-xs">{s.dateLabel}</div>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              No sessions yet — pick topics and click{" "}
+                              <span className="font-medium">Generate Plan</span>
+                              .
+                            </p>
+                          )}
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                    {/* ==== END STUDY PLANNER ==== */}
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
