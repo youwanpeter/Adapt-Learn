@@ -1,3 +1,4 @@
+// src/pages/Dashboard.jsx
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { Helmet } from "react-helmet";
 import { motion } from "framer-motion";
@@ -31,22 +32,9 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { useNavigate } from "react-router-dom";
-import axios from "axios";
+import { http } from "@/lib/api";
 
-/* ---------- API base resolver (adds /api exactly once) ---------- */
-const resolveApiBase = () => {
-  const raw =
-    (typeof import.meta !== "undefined" &&
-      import.meta.env &&
-      import.meta.env.VITE_API_URL &&
-      String(import.meta.env.VITE_API_URL).trim()) ||
-    "http://127.0.0.1:4000";
-  const base = raw.replace(/\/+$/, "");
-  return /\/api$/.test(base) ? base : `${base}/api`;
-};
-const API_BASE = resolveApiBase();
-const http = axios.create({ baseURL: API_BASE, timeout: 15000 });
-
+/* motion variants */
 const containerVariants = {
   hidden: { opacity: 0 },
   visible: { opacity: 1, transition: { staggerChildren: 0.1 } },
@@ -56,21 +44,7 @@ const itemVariants = {
   visible: { y: 0, opacity: 1, transition: { type: "spring", stiffness: 100 } },
 };
 
-const videoRecommendations = [
-  {
-    title: "Intro to Neural Networks",
-    channel: "3Blue1Brown",
-    duration: "19:27",
-  },
-  { title: "Support Vector Machines", channel: "StatQuest", duration: "23:45" },
-  {
-    title: "The Transformer Model",
-    channel: "AI Explained",
-    duration: "15:02",
-  },
-];
-
-/* ---------- tiny date helpers ---------- */
+/* tiny date helpers */
 const fmtDate = (d) =>
   new Date(d).toLocaleDateString(undefined, {
     year: "numeric",
@@ -82,17 +56,20 @@ const addDays = (d, n) => {
   nd.setDate(nd.getDate() + n);
   return nd;
 };
-const daysDiff = (a, b) => {
-  const ms =
-    new Date(b).setHours(0, 0, 0, 0) - new Date(a).setHours(0, 0, 0, 0);
-  return Math.max(0, Math.round(ms / 86400000));
-};
+const daysDiff = (a, b) =>
+  Math.max(
+    0,
+    Math.round(
+      (new Date(b).setHours(0, 0, 0, 0) - new Date(a).setHours(0, 0, 0, 0)) /
+        86400000
+    )
+  );
 
-const Dashboard = () => {
+export default function Dashboard() {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  /* ---------- Topics from latest document ---------- */
+  /* auth header */
   const token =
     localStorage.getItem("accessToken") || localStorage.getItem("token");
   const authHeader = useMemo(
@@ -100,45 +77,109 @@ const Dashboard = () => {
     [token]
   );
 
+  /* 🔹 USER NAME (new) */
+  const [userName, setUserName] = useState(() => {
+    try {
+      const u = JSON.parse(localStorage.getItem("user") || "null");
+      return u?.name || u?.fullName || u?.username || u?.email || "";
+    } catch {
+      return "";
+    }
+  });
+  const firstNameOf = (s) => {
+    if (!s) return "";
+    const raw = String(s).trim();
+    if (raw.includes(" ")) return raw.split(" ")[0];
+    if (raw.includes("@")) return raw.split("@")[0];
+    return raw;
+  };
+
+  // try to fetch user if not cached
+  useEffect(() => {
+    if (!token) return;
+    if (userName && userName.length > 1) return; // already have name
+
+    (async () => {
+      try {
+        const tryMe = (path) =>
+          http.get(path, {
+            headers: authHeader,
+            validateStatus: (s) => s === 200 || s === 404,
+          });
+
+        let data = null;
+        let r = await tryMe("/auth/me");
+        if (r.status === 200) data = r.data;
+        if (!data) {
+          r = await tryMe("/users/me");
+          if (r.status === 200) data = r.data;
+        }
+
+        if (data) {
+          const pretty =
+            data.name || data.fullName || data.username || data.email || "";
+          if (pretty) {
+            setUserName(pretty);
+            const cached = JSON.parse(localStorage.getItem("user") || "{}");
+            localStorage.setItem(
+              "user",
+              JSON.stringify({
+                ...cached,
+                name: pretty,
+                email: data.email || cached.email,
+              })
+            );
+          }
+        }
+      } catch {
+        /* non-critical */
+      }
+    })();
+  }, [token, authHeader, userName]);
+
+  /* topics */
   const [topicsLoading, setTopicsLoading] = useState(false);
-  const [topicsError, setTopicsError] = useState("");
   const [latestDoc, setLatestDoc] = useState(null);
   const [topics, setTopics] = useState([]);
   const [topicsOpen, setTopicsOpen] = useState(false);
+
+  /* videos */
+  const [videos, setVideos] = useState([]);
+  const [videosLoading, setVideosLoading] = useState(false);
 
   const fetchLatestDocAndTopics = useCallback(async () => {
     if (!token) {
       setLatestDoc(null);
       setTopics([]);
+      setVideos([]);
       return;
     }
     setTopicsLoading(true);
-    setTopicsError("");
     try {
+      // newest first assumed by your /documents/mine endpoint
       const { data: docs } = await http.get("/documents/mine", {
         headers: authHeader,
       });
       const latest = Array.isArray(docs) && docs.length ? docs[0] : null;
 
+      setLatestDoc(latest);
+      setVideos([]); // reset while loading
+
       if (!latest) {
-        setLatestDoc(null);
         setTopics([]);
-        setTopicsLoading(false);
         return;
       }
 
       const { data: t } = await http.get(`/topics/by-document/${latest._id}`, {
         headers: authHeader,
       });
-
-      setLatestDoc(latest);
       setTopics(Array.isArray(t) ? t : t?.topics || []);
     } catch (e) {
       const msg =
         e?.response?.data?.message || e?.message || "Failed to load topics.";
-      setTopicsError(msg);
       setLatestDoc(null);
       setTopics([]);
+      setVideos([]);
       toast({
         title: "Couldn’t load topics",
         description: msg,
@@ -149,16 +190,17 @@ const Dashboard = () => {
     }
   }, [authHeader, token, toast]);
 
-  // Initial load
+  /* initial load */
   useEffect(() => {
     fetchLatestDocAndTopics();
   }, [fetchLatestDocAndTopics]);
 
-  // React to new uploads (Upload.jsx dispatches 'last-uploaded-doc')
+  /* refresh when an upload finishes */
   useEffect(() => {
     const onNewDoc = () => {
       setLatestDoc(null);
       setTopics([]);
+      setVideos([]);
       fetchLatestDocAndTopics();
     };
     window.addEventListener("last-uploaded-doc", onNewDoc);
@@ -172,79 +214,77 @@ const Dashboard = () => {
     };
   }, [fetchLatestDocAndTopics]);
 
-  const showToast = () =>
-    toast({
-      title: "🚧 Feature not implemented",
-      description:
-        "This feature isn't implemented yet—but don't worry! You can request it in your next prompt! 🚀",
-    });
+  /* fetch video recs only when we have a doc id */
+  const fetchVideos = useCallback(
+    async (docId) => {
+      if (!docId || !token) {
+        setVideos([]);
+        return;
+      }
+      setVideosLoading(true);
+      try {
+        const { data } = await http.get(`/videos/by-document/${docId}`, {
+          headers: authHeader,
+          validateStatus: (s) => s === 200 || s === 404, // treat 404 as empty
+        });
+        setVideos(Array.isArray(data) ? data : []);
+      } catch {
+        setVideos([]); // non-critical
+      } finally {
+        setVideosLoading(false);
+      }
+    },
+    [authHeader, token]
+  );
 
-  /* ===================== STUDY PLANNER ===================== */
-  const [plannerOpen, setPlannerOpen] = useState(false);
-  const [selected, setSelected] = useState({}); // {topicId: boolean}
-  const [pace, setPace] = useState("moderate"); // fast|moderate|slow
-  const [dueDate, setDueDate] = useState(() => {
-    const d = addDays(new Date(), 7);
-    return d.toISOString().slice(0, 10);
-  });
+  useEffect(() => {
+    if (latestDoc?._id) fetchVideos(latestDoc._id);
+  }, [latestDoc?._id, fetchVideos]);
+
+  /* ===== Study planner ===== */
+  const [selected, setSelected] = useState({});
+  const [pace, setPace] = useState("moderate");
+  const [dueDate, setDueDate] = useState(() =>
+    addDays(new Date(), 7).toISOString().slice(0, 10)
+  );
   const [sessions, setSessions] = useState([]);
   const [generating, setGenerating] = useState(false);
 
   const toggleTopic = (id) => setSelected((s) => ({ ...s, [id]: !s[id] }));
-
-  const allSelectedTopics = useMemo(
-    () => topics.filter((t) => selected[t._id || t.title]),
-    [topics, selected]
-  );
-
+  const allSelectedTopics = topics.filter((t) => selected[t._id || t.title]);
   const estimateMinutes = (t) => {
-    // Base on summary length; fallback 25
     const words = (t?.summary || "").split(/\s+/).filter(Boolean).length;
     let base = 25 + Math.min(35, Math.floor(words / 20)); // 25–60
     const factor = pace === "fast" ? 0.75 : pace === "slow" ? 1.3 : 1.0;
     return Math.max(10, Math.round(base * factor));
   };
-
   const generatePlan = () => {
     if (!allSelectedTopics.length) {
       toast({ title: "Pick at least one topic", variant: "destructive" });
       return;
     }
-    const start = new Date(); // today
+    const start = new Date();
     const end = new Date(dueDate);
-    if (isNaN(end.getTime())) {
+    if (Number.isNaN(end.getTime())) {
       toast({ title: "Select a valid due date", variant: "destructive" });
       return;
     }
-    if (end < addDays(start, 0)) {
-      toast({ title: "Due date can’t be in the past", variant: "destructive" });
-      return;
-    }
-
     setGenerating(true);
-
-    // Distribute one session per topic across days from start..dueDate
     const spanDays = Math.max(1, daysDiff(start, end) + 1);
-    const count = allSelectedTopics.length;
-    const sessionsOut = [];
-    for (let i = 0; i < count; i++) {
-      const t = allSelectedTopics[i];
-      // Spread across the range
-      const dayIndex = Math.floor((i * spanDays) / count);
+    const out = allSelectedTopics.map((t, i) => {
+      const dayIndex = Math.floor((i * spanDays) / allSelectedTopics.length);
       const date = addDays(start, dayIndex);
-      sessionsOut.push({
+      return {
         id: `${t._id || t.title}::${i}`,
         date: date.toISOString(),
         dateLabel: fmtDate(date),
         topic: t.title || t.name,
         minutes: estimateMinutes(t),
-      });
-    }
-
-    setSessions(sessionsOut);
+      };
+    });
+    setSessions(out);
     setGenerating(false);
   };
-
   const savePlan = () => {
     const payload = {
       createdAt: new Date().toISOString(),
@@ -254,25 +294,19 @@ const Dashboard = () => {
       sourceDocument: latestDoc?._id || null,
       topics: allSelectedTopics.map((t) => t.title || t.name),
     };
-    // For now, store locally; later swap to POST /api/planner
     localStorage.setItem("studyPlan", JSON.stringify(payload));
     toast({
       title: "Study plan saved ✅",
       description: `Sessions: ${sessions.length}`,
     });
-    setPlannerOpen(false);
-    navigate("/planner"); // takes user to planner UI if you have it
   };
-  /* ================== END STUDY PLANNER ==================== */
+
+  const showToast = () => toast({ title: "Coming soon ✨" });
 
   return (
     <>
       <Helmet>
         <title>Dashboard | LearnAI</title>
-        <meta
-          name="description"
-          content="Your personalized learning dashboard."
-        />
       </Helmet>
 
       <motion.div
@@ -281,13 +315,14 @@ const Dashboard = () => {
         animate="visible"
         className="space-y-8"
       >
+        {/* header */}
         <motion.div
           variants={itemVariants}
           className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4"
         >
           <div>
             <h1 className="text-3xl font-bold text-white">
-              Welcome back, Alex!
+              Welcome back, {firstNameOf(userName) || "there"}!
             </h1>
             <p className="text-muted-foreground">
               Let's make today a productive one.
@@ -301,6 +336,7 @@ const Dashboard = () => {
           </Button>
         </motion.div>
 
+        {/* progress + topics */}
         <motion.div
           variants={itemVariants}
           className="grid gap-6 md:grid-cols-2 lg:grid-cols-3"
@@ -319,7 +355,6 @@ const Dashboard = () => {
             </CardContent>
           </Card>
 
-          {/* Topics to Review (wired to latest doc) */}
           <Card className="glassmorphic-card">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle>Topics to Review</CardTitle>
@@ -339,7 +374,6 @@ const Dashboard = () => {
                   : "Sign in to view topics"}
               </p>
 
-              {/* View topics dialog */}
               <Dialog open={topicsOpen} onOpenChange={setTopicsOpen}>
                 <DialogTrigger asChild>
                   <Button
@@ -350,6 +384,7 @@ const Dashboard = () => {
                     View Topics <ArrowRight className="ml-1 h-4 w-4" />
                   </Button>
                 </DialogTrigger>
+
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>Extracted Topics</DialogTitle>
@@ -382,7 +417,6 @@ const Dashboard = () => {
                                   </div>
                                 )}
                               </div>
-                              {/* ==== STUDY PLANNER: per-topic checkbox ==== */}
                               <input
                                 type="checkbox"
                                 className="h-4 w-4 ml-3"
@@ -409,28 +443,21 @@ const Dashboard = () => {
                       Refresh
                     </Button>
 
-                    {/* ==== STUDY PLANNER: open planner dialog ==== */}
                     <Dialog>
                       <DialogTrigger asChild>
-                        <Button
-                          disabled={!topics.length}
-                          onClick={() => setPlannerOpen(true)}
-                        >
+                        <Button disabled={!topics.length}>
                           📅 Create Study Plan
                         </Button>
                       </DialogTrigger>
-
-                      {/* Planner Dialog */}
                       <DialogContent className="max-w-xl">
                         <DialogHeader>
                           <DialogTitle>Create Study Plan</DialogTitle>
                           <DialogDescription>
-                            Choose pace & due date. We’ll generate dated
-                            sessions with estimated minutes.
+                            Choose pace & due date. We’ll generate sessions with
+                            estimated minutes.
                           </DialogDescription>
                         </DialogHeader>
 
-                        {/* Pace & Due date */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
                             <label className="text-sm font-medium">
@@ -464,13 +491,11 @@ const Dashboard = () => {
                           </div>
                         </div>
 
-                        {/* Selected count */}
                         <p className="text-xs text-muted-foreground mt-2">
                           Selected topics: {allSelectedTopics.length} /{" "}
                           {topics.length}
                         </p>
 
-                        {/* Actions */}
                         <div className="flex items-center gap-2 mt-2">
                           <Button
                             onClick={generatePlan}
@@ -482,17 +507,11 @@ const Dashboard = () => {
                             variant="secondary"
                             disabled={!sessions.length}
                             onClick={savePlan}
-                            title={
-                              sessions.length
-                                ? "Save & open planner"
-                                : "Generate a plan first"
-                            }
                           >
-                            Save Plan
+                            {sessions.length ? "Save Plan" : "Generate first"}
                           </Button>
                         </div>
 
-                        {/* Sessions preview */}
                         <div className="mt-4 max-h-64 overflow-auto space-y-2">
                           {sessions.length ? (
                             sessions.map((s) => (
@@ -519,7 +538,6 @@ const Dashboard = () => {
                         </div>
                       </DialogContent>
                     </Dialog>
-                    {/* ==== END STUDY PLANNER ==== */}
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -545,6 +563,7 @@ const Dashboard = () => {
           </Card>
         </motion.div>
 
+        {/* quick actions */}
         <motion.div
           variants={itemVariants}
           className="grid gap-6 lg:grid-cols-3"
@@ -587,7 +606,7 @@ const Dashboard = () => {
               <motion.div
                 whileHover={{ scale: 1.05 }}
                 onClick={() => navigate("/planner")}
-                className="flex flex-col items-center justify-center p-4 bg-secondary/50 hover:bg-secondary rounded-lg cursor-pointer text-center"
+                className="flex flex-col items-center justify-center p-4 bg-secondary/50 hover	bg-secondary rounded-lg cursor-pointer text-center"
               >
                 <Calendar className="h-8 w-8 text-primary mb-2" />
                 <p className="font-semibold">View Planner</p>
@@ -627,38 +646,57 @@ const Dashboard = () => {
           </Card>
         </motion.div>
 
+        {/* recommended videos */}
         <motion.div variants={itemVariants}>
           <Card className="glassmorphic-card">
             <CardHeader>
               <CardTitle>Recommended Videos</CardTitle>
               <CardDescription>
-                Based on your recent activity in "Machine Learning"
+                {latestDoc
+                  ? `Based on: ${latestDoc.originalName || latestDoc._id}`
+                  : "Upload a document to get recommendations"}
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {videoRecommendations.map((video, index) => (
-                <motion.div
-                  key={index}
-                  whileHover={{ y: -5 }}
-                  onClick={() => toast({ title: "Coming soon ✨" })}
-                  className="bg-secondary/50 p-4 rounded-lg cursor-pointer"
-                >
-                  <div className="aspect-video bg-muted rounded-md mb-3 flex items-center justify-center">
-                    <Video className="w-10 h-10 text-muted-foreground" />
-                  </div>
-                  <p className="font-semibold truncate">{video.title}</p>
-                  <div className="flex justify-between items-center text-xs text-muted-foreground mt-1">
-                    <span>{video.channel}</span>
-                    <span>{video.duration}</span>
-                  </div>
-                </motion.div>
-              ))}
+              {videosLoading ? (
+                <div className="text-sm text-muted-foreground">Loading…</div>
+              ) : videos.length ? (
+                videos.map((v) => (
+                  <motion.a
+                    key={v.videoId}
+                    whileHover={{ y: -5 }}
+                    href={v.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="bg-secondary/50 p-4 rounded-lg block"
+                    title={v.title}
+                  >
+                    <div className="aspect-video rounded-md mb-3 overflow-hidden bg-muted">
+                      {v.thumbnail ? (
+                        <img
+                          src={v.thumbnail}
+                          alt={v.title}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : null}
+                    </div>
+                    <p className="font-semibold line-clamp-2">{v.title}</p>
+                    <div className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                      {v.channelTitle}
+                    </div>
+                  </motion.a>
+                ))
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  {latestDoc
+                    ? "No recommendations yet. Try re-uploading or another document."
+                    : "No videos yet."}
+                </div>
+              )}
             </CardContent>
           </Card>
         </motion.div>
       </motion.div>
     </>
   );
-};
-
-export default Dashboard;
+}

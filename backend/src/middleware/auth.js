@@ -1,13 +1,17 @@
-import { verifyToken } from "../utils/jwt.js";
+// Simple JWT auth middleware (ESM)
+import jwt from "jsonwebtoken";
 
-export const requireAuth = (req, res, next) => {
-  const raw = req.headers.authorization || "";
-  const token = raw.startsWith("Bearer ") ? raw.slice(7) : null;
-  if (!token) return res.status(401).json({ message: "No token" });
+export function requireAuth(req, res, next) {
+  const hdr = req.headers.authorization || "";
+  const token = hdr.startsWith("Bearer ") ? hdr.slice(7) : null;
+  if (!token) return res.status(401).json({ message: "Missing token" });
+
   try {
-    req.user = verifyToken(token);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // standardize user obj: { sub, role }
+    req.user = { sub: decoded.sub, role: decoded.role || "student" };
     next();
   } catch {
-    res.status(401).json({ message: "Invalid/expired token" });
+    return res.status(401).json({ message: "Invalid or expired token" });
   }
-};
+}

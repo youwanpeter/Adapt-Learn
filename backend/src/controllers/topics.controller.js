@@ -1,20 +1,26 @@
-import mongoose from "mongoose";
 import Topic from "../models/Topic.js";
+import Document from "../models/Document.js";
 
-export const listByDocument = async (req, res) => {
-  const { documentId } = req.params;
+/**
+ * GET /api/topics/by-document/:docId
+ * Returns all topics for a document; enforces ownership when logged in.
+ */
+export const getTopicsByDocument = async (req, res) => {
+  const { docId } = req.params;
 
-  if (!mongoose.isValidObjectId(documentId)) {
-    return res.status(400).json({ message: "Invalid document id" });
+  const doc = await Document.findById(docId).select("owner");
+  if (!doc) return res.status(404).json({ message: "Document not found" });
+
+  // if route is protected, ensure the same owner
+  if (req.user?.sub && String(doc.owner) !== String(req.user.sub)) {
+    return res.status(403).json({ message: "Forbidden" });
   }
 
-  // return topics for that document (adjust fields/sort as you like)
-  const topics = await Topic.find({ document: documentId })
+  const topics = await Topic.find({ document: docId })
     .sort({ order: 1, createdAt: 1 })
-    .lean();
+    .select("-__v");
 
   return res.json(topics);
 };
 
-// optional default export
-export default { listByDocument };
+export default { getTopicsByDocument };

@@ -12,48 +12,34 @@ import {
 } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
 import { UploadCloud, File as FileIcon, X, Loader2 } from "lucide-react";
-import axios from "axios";
-
-/* ---------- API base resolver (adds /api exactly once) ---------- */
-const resolveApiBase = () => {
-  const raw =
-    (typeof import.meta !== "undefined" &&
-      import.meta.env &&
-      import.meta.env.VITE_API_URL &&
-      String(import.meta.env.VITE_API_URL).trim()) ||
-    "http://127.0.0.1:4000";
-  const base = raw.replace(/\/+$/, "");
-  return /\/api$/.test(base) ? base : `${base}/api`;
-};
-const API_BASE = resolveApiBase();
+import { http } from "@/lib/api";
 
 /* ---------- Helpers ---------- */
-function formatBytes(bytes, decimals = 2) {
+const formatBytes = (bytes, decimals = 2) => {
   if (bytes === 0) return "0 Bytes";
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
+  const k = 1024,
+    dm = decimals < 0 ? 0 : decimals;
   const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
-}
+};
 
 const STRONG_TYPES = [
   "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ];
 const EXTRA_TYPES = [
   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   "image/jpeg",
   "image/png",
 ];
-const MAX_SIZE = 25 * 1024 * 1024; // 25MB
+const MAX_SIZE = 25 * 1024 * 1024;
 
 const Upload = () => {
   const { toast } = useToast();
   const [files, setFiles] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
 
-  /* ---------- Dropzone ---------- */
   const onDrop = useCallback(
     (acceptedFiles) => {
       const next = acceptedFiles.map((f) => ({
@@ -79,8 +65,7 @@ const Upload = () => {
 
       setFiles((prev) => [...prev, ...next]);
 
-      const hasExtra = next.some((i) => EXTRA_TYPES.includes(i.file.type));
-      if (hasExtra) {
+      if (next.some((i) => EXTRA_TYPES.includes(i.file.type))) {
         toast({
           title: "Heads up ⚠️",
           description:
@@ -105,10 +90,8 @@ const Upload = () => {
     maxSize: MAX_SIZE,
   });
 
-  /* ---------- Actions ---------- */
   const removeFile = (idx) =>
     setFiles((arr) => arr.filter((_, i) => i !== idx));
-
   const clearAll = () => setFiles([]);
 
   const uploadOne = async (idx) => {
@@ -135,10 +118,7 @@ const Upload = () => {
     form.append("file", files[idx].file);
 
     try {
-      const res = await axios.post(`${API_BASE}/documents/upload`, form, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const res = await http.post("/documents/upload", form, {
         onUploadProgress: (e) => {
           if (!e.total) return;
           const pct = Math.round((e.loaded * 100) / e.total);
@@ -169,7 +149,6 @@ const Upload = () => {
         }`,
       });
 
-      // 🔥 Notify dashboard to refresh topics
       if (document?._id) {
         localStorage.setItem("lastUploadedDocId", document._id);
         window.dispatchEvent(
@@ -203,8 +182,7 @@ const Upload = () => {
     const ready = files
       .map((f, i) => ({ ...f, idx: i }))
       .filter((f) => f.status === "ready");
-
-    if (ready.length === 0) {
+    if (!ready.length) {
       toast({
         title: "Nothing to upload",
         description: "Add files or remove ones that errored.",
@@ -212,7 +190,6 @@ const Upload = () => {
       });
       return;
     }
-
     setIsUploading(true);
     for (const item of ready) {
       if (!files[item.idx]) break;
@@ -222,15 +199,10 @@ const Upload = () => {
     setIsUploading(false);
   };
 
-  /* ---------- UI ---------- */
   return (
     <>
       <Helmet>
         <title>Upload Documents | LearnAI</title>
-        <meta
-          name="description"
-          content="Upload your course materials for processing."
-        />
       </Helmet>
 
       <motion.div
@@ -245,7 +217,7 @@ const Upload = () => {
           </h1>
           <p className="text-muted-foreground max-w-2xl mx-auto">
             Drag and drop your documents here. We support PDF, DOCX, PPTX, and
-            image files.
+            images.
           </p>
         </div>
 
@@ -267,13 +239,11 @@ const Upload = () => {
               >
                 <UploadCloud className="w-16 h-16 text-primary" />
               </motion.div>
-              {isDragActive ? (
-                <p className="font-semibold">Drop the files here ...</p>
-              ) : (
-                <p className="font-semibold">
-                  Drag 'n' drop some files here, or click to select files
-                </p>
-              )}
+              <p className="font-semibold">
+                {isDragActive
+                  ? "Drop the files here ..."
+                  : "Drag 'n' drop some files here, or click to select files"}
+              </p>
               <p className="text-xs text-muted-foreground mt-2">
                 Supported formats: PDF, DOCX, PPTX, JPG, PNG (25MB max each)
               </p>
@@ -294,9 +264,9 @@ const Upload = () => {
                   onClick={handleProcessFiles}
                   disabled={isUploading}
                 >
-                  {isUploading ? (
+                  {isUploading && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : null}
+                  )}{" "}
                   {isUploading
                     ? "Uploading..."
                     : `Upload ${
@@ -317,8 +287,8 @@ const Upload = () => {
               <div className="space-y-3">
                 {files.map((item, index) => {
                   const { file, status, progress, error, result } = item;
-                  const ok = status === "done";
-                  const bad = status === "error";
+                  const ok = status === "done",
+                    bad = status === "error";
                   return (
                     <motion.div
                       key={`${file.name}-${index}`}
@@ -339,7 +309,6 @@ const Upload = () => {
                             </p>
                           </div>
                         </div>
-
                         <div className="flex items-center gap-2">
                           {status === "uploading" && (
                             <span className="text-xs">{progress}%</span>

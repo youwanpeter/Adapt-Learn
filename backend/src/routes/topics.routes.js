@@ -1,10 +1,10 @@
 import { Router } from "express";
+import { getTopicsByDocument } from "../controllers/topics.controller.js";
 import { requireAuth } from "../middleware/auth.js";
-import { listByDocument } from "../controllers/topics.controller.js";
 
 const r = Router();
 
-// GET /api/topics/by-document/:documentId
-r.get("/by-document/:documentId", requireAuth, listByDocument);
+// protect to match your other /documents/* endpoints
+r.get("/by-document/:docId", requireAuth, getTopicsByDocument);
 
 export default r;

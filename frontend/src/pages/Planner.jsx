@@ -59,32 +59,7 @@ const saveProgress = (progress) => {
 
 /* --------------------- component --------------------- */
 
-const initialTasks = [
-  {
-    id: 1,
-    text: "Finish Chapter 5 quiz for History of AI",
-    completed: false,
-    dueDate: "Tomorrow",
-  },
-  {
-    id: 2,
-    text: "Outline essay on Ethics in Machine Learning",
-    completed: false,
-    dueDate: "In 3 days",
-  },
-  {
-    id: 3,
-    text: "Read research paper on Quantum Computing",
-    completed: true,
-    dueDate: "Yesterday",
-  },
-  {
-    id: 4,
-    text: "Prepare presentation slides for project proposal",
-    completed: false,
-    dueDate: "In 5 days",
-  },
-];
+const initialTasks = [];
 
 const Planner = () => {
   const [date, setDate] = React.useState(new Date());

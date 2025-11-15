@@ -1,3 +1,4 @@
+// backend/src/models/User.js
 import mongoose from "mongoose";
 
 const userSchema = new mongoose.Schema(
@@ -6,18 +7,21 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, lowercase: true, unique: true },
     passwordHash: { type: String, required: true },
     role: { type: String, enum: ["student", "admin"], default: "student" },
-    preferences: {
-      pace: {
-        type: String,
-        enum: ["slow", "normal", "fast"],
-        default: "normal",
-      },
-      modality: {
-        type: String,
-        enum: ["text", "video", "mixed"],
-        default: "mixed",
-      },
+
+    avatarUrl: { type: String, default: "" },
+
+    notificationSettings: {
+      studyReminders: { type: Boolean, default: true },
+      progressUpdates: { type: Boolean, default: true },
+      recommendations: { type: Boolean, default: true },
+      newsletter: { type: Boolean, default: false },
     },
+
+    emailVerified: { type: Boolean, default: false },
+
+    otpCode: { type: String, default: null },
+    otpPurpose: { type: String, default: null }, // "verify_email" | "login"
+    otpExpiresAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
