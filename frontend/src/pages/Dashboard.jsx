@@ -1,4 +1,7 @@
-// src/pages/Dashboard.jsx
+// =============================================
+// Dashboard.jsx — Fully Fixed & Clean Version
+// =============================================
+
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { Helmet } from "react-helmet";
 import { motion } from "framer-motion";
@@ -44,18 +47,20 @@ const itemVariants = {
   visible: { y: 0, opacity: 1, transition: { type: "spring", stiffness: 100 } },
 };
 
-/* tiny date helpers */
+/* Helpers */
 const fmtDate = (d) =>
   new Date(d).toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
   });
+
 const addDays = (d, n) => {
   const nd = new Date(d);
   nd.setDate(nd.getDate() + n);
   return nd;
 };
+
 const daysDiff = (a, b) =>
   Math.max(
     0,
@@ -69,15 +74,18 @@ export default function Dashboard() {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  /* auth header */
+  /* Auth header */
   const token =
     localStorage.getItem("accessToken") || localStorage.getItem("token");
+
   const authHeader = useMemo(
     () => (token ? { Authorization: `Bearer ${token}` } : {}),
     [token]
   );
 
-  /* 🔹 USER NAME (new) */
+  /* -----------------------------------------
+     USER NAME
+  ------------------------------------------ */
   const [userName, setUserName] = useState(() => {
     try {
       const u = JSON.parse(localStorage.getItem("user") || "null");
@@ -86,6 +94,7 @@ export default function Dashboard() {
       return "";
     }
   });
+
   const firstNameOf = (s) => {
     if (!s) return "";
     const raw = String(s).trim();
@@ -94,10 +103,10 @@ export default function Dashboard() {
     return raw;
   };
 
-  // try to fetch user if not cached
+  // Fetch user if needed
   useEffect(() => {
     if (!token) return;
-    if (userName && userName.length > 1) return; // already have name
+    if (userName && userName.length > 1) return;
 
     (async () => {
       try {
@@ -108,8 +117,10 @@ export default function Dashboard() {
           });
 
         let data = null;
+
         let r = await tryMe("/auth/me");
         if (r.status === 200) data = r.data;
+
         if (!data) {
           r = await tryMe("/users/me");
           if (r.status === 200) data = r.data;
@@ -131,19 +142,21 @@ export default function Dashboard() {
             );
           }
         }
-      } catch {
-        /* non-critical */
-      }
+      } catch {}
     })();
   }, [token, authHeader, userName]);
 
-  /* topics */
+  /* -----------------------------------------
+     TOPICS + DOCUMENTS
+  ------------------------------------------ */
   const [topicsLoading, setTopicsLoading] = useState(false);
   const [latestDoc, setLatestDoc] = useState(null);
   const [topics, setTopics] = useState([]);
   const [topicsOpen, setTopicsOpen] = useState(false);
 
-  /* videos */
+  /* -----------------------------------------
+     VIDEOS
+  ------------------------------------------ */
   const [videos, setVideos] = useState([]);
   const [videosLoading, setVideosLoading] = useState(false);
 
@@ -154,16 +167,17 @@ export default function Dashboard() {
       setVideos([]);
       return;
     }
+
     setTopicsLoading(true);
+
     try {
-      // newest first assumed by your /documents/mine endpoint
       const { data: docs } = await http.get("/documents/mine", {
         headers: authHeader,
       });
-      const latest = Array.isArray(docs) && docs.length ? docs[0] : null;
 
+      const latest = Array.isArray(docs) && docs.length ? docs[0] : null;
       setLatestDoc(latest);
-      setVideos([]); // reset while loading
+      setVideos([]);
 
       if (!latest) {
         setTopics([]);
@@ -173,106 +187,197 @@ export default function Dashboard() {
       const { data: t } = await http.get(`/topics/by-document/${latest._id}`, {
         headers: authHeader,
       });
+
       setTopics(Array.isArray(t) ? t : t?.topics || []);
     } catch (e) {
-      const msg =
-        e?.response?.data?.message || e?.message || "Failed to load topics.";
-      setLatestDoc(null);
-      setTopics([]);
-      setVideos([]);
       toast({
         title: "Couldn’t load topics",
-        description: msg,
+        description: e?.response?.data?.message || e?.message,
         variant: "destructive",
       });
+      setTopics([]);
     } finally {
       setTopicsLoading(false);
     }
   }, [authHeader, token, toast]);
 
-  /* initial load */
   useEffect(() => {
     fetchLatestDocAndTopics();
   }, [fetchLatestDocAndTopics]);
 
-  /* refresh when an upload finishes */
-  useEffect(() => {
-    const onNewDoc = () => {
-      setLatestDoc(null);
-      setTopics([]);
-      setVideos([]);
-      fetchLatestDocAndTopics();
-    };
-    window.addEventListener("last-uploaded-doc", onNewDoc);
-    const onStorage = (ev) => {
-      if (ev.key === "lastUploadedDocId") onNewDoc();
-    };
-    window.addEventListener("storage", onStorage);
-    return () => {
-      window.removeEventListener("last-uploaded-doc", onNewDoc);
-      window.removeEventListener("storage", onStorage);
-    };
-  }, [fetchLatestDocAndTopics]);
-
-  /* fetch video recs only when we have a doc id */
   const fetchVideos = useCallback(
-    async (docId) => {
-      if (!docId || !token) {
-        setVideos([]);
-        return;
-      }
+    async (id) => {
+      if (!id) return setVideos([]);
       setVideosLoading(true);
       try {
-        const { data } = await http.get(`/videos/by-document/${docId}`, {
+        const { data } = await http.get(`/videos/by-document/${id}`, {
           headers: authHeader,
-          validateStatus: (s) => s === 200 || s === 404, // treat 404 as empty
+          validateStatus: (s) => s === 200 || s === 404,
         });
         setVideos(Array.isArray(data) ? data : []);
       } catch {
-        setVideos([]); // non-critical
+        setVideos([]);
       } finally {
         setVideosLoading(false);
       }
     },
-    [authHeader, token]
+    [authHeader]
   );
 
   useEffect(() => {
     if (latestDoc?._id) fetchVideos(latestDoc._id);
-  }, [latestDoc?._id, fetchVideos]);
+  }, [latestDoc, fetchVideos]);
 
-  /* ===== Study planner ===== */
+  /* -----------------------------------------
+     STUDY PLAN + TOPIC SELECTION
+  ------------------------------------------ */
   const [selected, setSelected] = useState({});
   const [pace, setPace] = useState("moderate");
-  const [dueDate, setDueDate] = useState(() =>
+  const [dueDate, setDueDate] = useState(
     addDays(new Date(), 7).toISOString().slice(0, 10)
   );
   const [sessions, setSessions] = useState([]);
   const [generating, setGenerating] = useState(false);
+  const [upcomingSession, setUpcomingSession] = useState(null);
 
+  /* Progress stats */
+  const [studyStats, setStudyStats] = useState({ completed: 0, total: 0 });
+  const [plannerStats, setPlannerStats] = useState({ completed: 0, total: 0 });
+  const [hybridProgress, setHybridProgress] = useState(0);
+
+  /* Load saved study plan */
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("studyPlan");
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (Array.isArray(saved.sessions)) setSessions(saved.sessions);
+    } catch {}
+  }, []);
+
+  /* Load planner tasks */
+  useEffect(() => {
+    try {
+      const raw =
+        localStorage.getItem("plannerTasks") || localStorage.getItem("tasks");
+
+      if (!raw) return;
+
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return;
+
+      const total = arr.length;
+      const completed = arr.filter(
+        (t) => t.completed || t.done || t.checked
+      ).length;
+
+      setPlannerStats({ completed, total });
+    } catch {}
+  }, []);
+
+  /* Study session completion stats */
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("studyPlan");
+      const saved = raw ? JSON.parse(raw) : null;
+
+      const allSessions = sessions.length
+        ? sessions
+        : Array.isArray(saved?.sessions)
+        ? saved.sessions
+        : [];
+
+      if (!allSessions.length) {
+        setStudyStats({ completed: 0, total: 0 });
+        return;
+      }
+
+      // FIXED: JS only (NO TYPESCRIPT)
+      const completedIds = new Set(
+        saved?.completedSessionIds || saved?.completed || []
+      );
+
+      const completed = allSessions.filter(
+        (s) => s.completed || s.done || completedIds.has(s.id)
+      ).length;
+
+      setStudyStats({ completed, total: allSessions.length });
+    } catch {
+      setStudyStats({ completed: 0, total: 0 });
+    }
+  }, [sessions]);
+
+  /* Upcoming session */
+  useEffect(() => {
+    if (!sessions.length) {
+      setUpcomingSession(null);
+      return;
+    }
+    const today = new Date().setHours(0, 0, 0, 0);
+    const sorted = [...sessions].sort(
+      (a, b) => new Date(a.date) - new Date(b.date)
+    );
+    const next =
+      sorted.find((s) => new Date(s.date).setHours(0, 0, 0, 0) >= today) ||
+      sorted[0];
+    setUpcomingSession(next || null);
+  }, [sessions]);
+
+  /* Hybrid progress */
+  useEffect(() => {
+    const topicTotal = topics.length;
+    const topicCompleted = Object.values(selected).filter(Boolean).length;
+
+    const ratios = [];
+
+    if (studyStats.total) ratios.push(studyStats.completed / studyStats.total);
+
+    if (plannerStats.total)
+      ratios.push(plannerStats.completed / plannerStats.total);
+
+    if (topicTotal) ratios.push(topicCompleted / topicTotal);
+
+    const avg =
+      ratios.length === 0
+        ? 0
+        : ratios.reduce((a, b) => a + b, 0) / ratios.length;
+
+    setHybridProgress(Math.round(avg * 100));
+  }, [studyStats, plannerStats, topics.length, selected]);
+
+  /* Toggle topic selection */
   const toggleTopic = (id) => setSelected((s) => ({ ...s, [id]: !s[id] }));
-  const allSelectedTopics = topics.filter((t) => selected[t._id || t.title]);
+
+  /* Generate study sessions */
   const estimateMinutes = (t) => {
-    const words = (t?.summary || "").split(/\s+/).filter(Boolean).length;
-    let base = 25 + Math.min(35, Math.floor(words / 20)); // 25–60
-    const factor = pace === "fast" ? 0.75 : pace === "slow" ? 1.3 : 1.0;
+    const words = (t?.summary || "").split(/\s+/).length;
+    let base = 25 + Math.min(35, Math.floor(words / 20));
+    const factor = pace === "fast" ? 0.7 : pace === "slow" ? 1.3 : 1;
     return Math.max(10, Math.round(base * factor));
   };
+
   const generatePlan = () => {
-    if (!allSelectedTopics.length) {
-      toast({ title: "Pick at least one topic", variant: "destructive" });
-      return;
-    }
+    const chosen = topics.filter((t) => selected[t._id || t.title]);
+    if (!chosen.length)
+      return toast({
+        title: "Pick at least one topic",
+        variant: "destructive",
+      });
+
     const start = new Date();
     const end = new Date(dueDate);
-    if (Number.isNaN(end.getTime())) {
-      toast({ title: "Select a valid due date", variant: "destructive" });
-      return;
-    }
+    if (Number.isNaN(end.getTime()))
+      return toast({
+        title: "Select a valid due date",
+        variant: "destructive",
+      });
+
     setGenerating(true);
+
     const spanDays = Math.max(1, daysDiff(start, end) + 1);
-    const out = allSelectedTopics.map((t, i) => {
-      const dayIndex = Math.floor((i * spanDays) / allSelectedTopics.length);
+
+    const out = chosen.map((t, i) => {
+      const dayIndex = Math.floor((i * spanDays) / chosen.length);
       const date = addDays(start, dayIndex);
       return {
         id: `${t._id || t.title}::${i}`,
@@ -282,26 +387,39 @@ export default function Dashboard() {
         minutes: estimateMinutes(t),
       };
     });
+
     setSessions(out);
     setGenerating(false);
   };
+
+  /* Save study plan */
   const savePlan = () => {
+    const chosen = topics.filter((t) => selected[t._id || t.title]);
+
     const payload = {
       createdAt: new Date().toISOString(),
       dueDate,
       pace,
       sessions,
       sourceDocument: latestDoc?._id || null,
-      topics: allSelectedTopics.map((t) => t.title || t.name),
+      topics: chosen.map((t) => t.title || t.name),
     };
+
     localStorage.setItem("studyPlan", JSON.stringify(payload));
+
     toast({
-      title: "Study plan saved ✅",
+      title: "Study plan saved",
       description: `Sessions: ${sessions.length}`,
     });
   };
 
-  const showToast = () => toast({ title: "Coming soon ✨" });
+  /* Topic stats */
+  const topicCompletedCount = Object.values(selected).filter(Boolean).length;
+  const topicTotalCount = topics.length;
+
+  /* -----------------------------------------
+     RENDER
+  ------------------------------------------ */
 
   return (
     <>
@@ -315,7 +433,7 @@ export default function Dashboard() {
         animate="visible"
         className="space-y-8"
       >
-        {/* header */}
+        {/* HEADER */}
         <motion.div
           variants={itemVariants}
           className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4"
@@ -328,50 +446,75 @@ export default function Dashboard() {
               Let's make today a productive one.
             </p>
           </div>
+
           <Button
             onClick={() => navigate("/upload")}
-            className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20"
+            className="bg-primary text-primary-foreground"
           >
             <FilePlus2 className="mr-2 h-4 w-4" /> Upload Document
           </Button>
         </motion.div>
 
-        {/* progress + topics */}
+        {/* ---------- PROGRESS SECTION ---------- */}
         <motion.div
           variants={itemVariants}
           className="grid gap-6 md:grid-cols-2 lg:grid-cols-3"
         >
+          {/* HYBRID PROGRESS CARD */}
           <Card className="glassmorphic-card">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle>Overall Progress</CardTitle>
               <Zap className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
+
             <CardContent>
-              <div className="text-2xl font-bold">75%</div>
+              <div className="text-2xl font-bold">{hybridProgress}%</div>
               <p className="text-xs text-muted-foreground">
-                +20% from last month
+                Based on Study Sessions, Planner Tasks & Topic Reviews.
               </p>
-              <Progress value={75} className="mt-4 h-2" />
+
+              <div className="mt-3 text-[11px] text-muted-foreground space-y-1">
+                <div>
+                  Study Plan:{" "}
+                  <span className="font-medium">
+                    {studyStats.completed}/{studyStats.total}
+                  </span>
+                </div>
+                <div>
+                  Planner Tasks:{" "}
+                  <span className="font-medium">
+                    {plannerStats.completed}/{plannerStats.total}
+                  </span>
+                </div>
+                <div>
+                  Topics Reviewed:{" "}
+                  <span className="font-medium">
+                    {topicCompletedCount}/{topicTotalCount}
+                  </span>
+                </div>
+              </div>
+
+              <Progress value={hybridProgress} className="mt-4 h-2" />
             </CardContent>
           </Card>
 
+          {/* TOPICS CARD */}
           <Card className="glassmorphic-card">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle>Topics to Review</CardTitle>
               <Lightbulb className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
+
             <CardContent>
               <div className="text-2xl font-bold">
                 {topicsLoading ? "—" : topics.length}
               </div>
               <p className="text-xs text-muted-foreground">
                 {topicsLoading
-                  ? "Loading from your latest document..."
+                  ? "Loading..."
                   : latestDoc
                   ? `From: ${latestDoc.originalName || latestDoc._id}`
-                  : token
-                  ? "Upload a document to see extracted topics"
-                  : "Sign in to view topics"}
+                  : "Upload a document to see topics"}
               </p>
 
               <Dialog open={topicsOpen} onOpenChange={setTopicsOpen}>
@@ -389,53 +532,43 @@ export default function Dashboard() {
                   <DialogHeader>
                     <DialogTitle>Extracted Topics</DialogTitle>
                     <DialogDescription>
-                      {latestDoc
-                        ? latestDoc.originalName || latestDoc._id
-                        : "Latest document"}
+                      {latestDoc?.originalName}
                     </DialogDescription>
                   </DialogHeader>
 
-                  {topicsLoading ? (
-                    <p className="text-sm text-muted-foreground">Loading…</p>
-                  ) : topics.length ? (
-                    <ul className="space-y-2 max-h-80 overflow-auto">
-                      {topics.map((t) => {
+                  <div className="max-h-80 overflow-auto space-y-2">
+                    {topicsLoading ? (
+                      <p>Loading…</p>
+                    ) : topics.length ? (
+                      topics.map((t) => {
                         const id = t._id || t.title;
                         return (
-                          <li
+                          <div
                             key={id}
-                            className="p-3 rounded-md bg-secondary/50"
+                            className="p-3 rounded bg-secondary/50 flex justify-between"
                           >
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <div className="font-medium text-sm">
-                                  {t.title || t.name}
-                                </div>
-                                {t.summary && (
-                                  <div className="text-xs text-muted-foreground mt-1 line-clamp-3">
-                                    {t.summary}
-                                  </div>
-                                )}
-                              </div>
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4 ml-3"
-                                checked={!!selected[id]}
-                                onChange={() => toggleTopic(id)}
-                                title="Include in study plan"
-                              />
+                            <div>
+                              <p className="font-medium">{t.title}</p>
+                              {t.summary && (
+                                <p className="text-xs text-muted-foreground line-clamp-3">
+                                  {t.summary}
+                                </p>
+                              )}
                             </div>
-                          </li>
+                            <input
+                              type="checkbox"
+                              checked={!!selected[id]}
+                              onChange={() => toggleTopic(id)}
+                            />
+                          </div>
                         );
-                      })}
-                    </ul>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No topics found.
-                    </p>
-                  )}
+                      })
+                    ) : (
+                      <p>No topics found.</p>
+                    )}
+                  </div>
 
-                  <DialogFooter className="flex flex-col sm:flex-row sm:justify-between gap-2">
+                  <DialogFooter className="mt-3 flex justify-between">
                     <Button
                       variant="secondary"
                       onClick={fetchLatestDocAndTopics}
@@ -449,91 +582,71 @@ export default function Dashboard() {
                           📅 Create Study Plan
                         </Button>
                       </DialogTrigger>
+
                       <DialogContent className="max-w-xl">
                         <DialogHeader>
                           <DialogTitle>Create Study Plan</DialogTitle>
-                          <DialogDescription>
-                            Choose pace & due date. We’ll generate sessions with
-                            estimated minutes.
-                          </DialogDescription>
                         </DialogHeader>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label className="text-sm font-medium">
-                              Study Pace
-                            </label>
+                            <label>Study Pace</label>
                             <select
-                              className="w-full p-2 mt-1 rounded bg-background border"
+                              className="w-full p-2 rounded bg-background border"
                               value={pace}
                               onChange={(e) => setPace(e.target.value)}
                             >
-                              <option value="fast">
-                                Fast (shorter sessions)
-                              </option>
-                              <option value="moderate">
-                                Moderate (default)
-                              </option>
-                              <option value="slow">Slow (deeper study)</option>
+                              <option value="fast">Fast</option>
+                              <option value="moderate">Moderate</option>
+                              <option value="slow">Slow</option>
                             </select>
                           </div>
+
                           <div>
-                            <label className="text-sm font-medium">
-                              Due Date
-                            </label>
+                            <label>Due Date</label>
                             <input
                               type="date"
-                              className="w-full p-2 mt-1 rounded bg-background border"
                               value={dueDate}
                               onChange={(e) => setDueDate(e.target.value)}
-                              min={new Date().toISOString().slice(0, 10)}
+                              className="w-full p-2 rounded bg-background border"
                             />
                           </div>
                         </div>
 
-                        <p className="text-xs text-muted-foreground mt-2">
-                          Selected topics: {allSelectedTopics.length} /{" "}
-                          {topics.length}
-                        </p>
-
-                        <div className="flex items-center gap-2 mt-2">
+                        <div className="flex gap-2 mt-3">
                           <Button
                             onClick={generatePlan}
-                            disabled={generating || !allSelectedTopics.length}
+                            disabled={!Object.values(selected).includes(true)}
                           >
-                            {generating ? "Generating…" : "Generate Plan"}
+                            Generate
                           </Button>
                           <Button
                             variant="secondary"
-                            disabled={!sessions.length}
                             onClick={savePlan}
+                            disabled={!sessions.length}
                           >
-                            {sessions.length ? "Save Plan" : "Generate first"}
+                            Save
                           </Button>
                         </div>
 
-                        <div className="mt-4 max-h-64 overflow-auto space-y-2">
+                        <div className="max-h-64 overflow-auto mt-4 space-y-2">
                           {sessions.length ? (
                             sessions.map((s) => (
                               <div
                                 key={s.id}
-                                className="p-3 rounded bg-secondary/50 text-sm flex justify-between"
+                                className="p-3 rounded bg-secondary/50 flex justify-between"
                               >
-                                <div className="pr-3">
-                                  <div className="font-medium">{s.topic}</div>
-                                  <div className="text-xs text-muted-foreground">
+                                <div>
+                                  <p className="font-medium">{s.topic}</p>
+                                  <p className="text-xs text-muted-foreground">
                                     Est. {s.minutes} min
-                                  </div>
+                                  </p>
                                 </div>
-                                <div className="text-xs">{s.dateLabel}</div>
+                                <p className="text-xs">{s.dateLabel}</p>
                               </div>
                             ))
                           ) : (
-                            <p className="text-xs text-muted-foreground">
-                              No sessions yet — pick topics and click{" "}
-                              <span className="font-medium">Generate Plan</span>
-                              .
-                            </p>
+                            <p>No sessions yet.</p>
                           )}
                         </div>
                       </DialogContent>
@@ -544,40 +657,56 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
+          {/* UPCOMING SESSION */}
           <Card className="glassmorphic-card md:col-span-2 lg:col-span-1">
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle>Next Milestone</CardTitle>
+            <CardHeader>
+              <CardTitle>Upcoming Study Session</CardTitle>
+              <CardDescription>
+                {upcomingSession
+                  ? `On ${fmtDate(upcomingSession.date)}`
+                  : "No upcoming sessions"}
+              </CardDescription>
             </CardHeader>
+
             <CardContent>
-              <div className="font-bold">Mid-term Exam Prep</div>
-              <p className="text-xs text-muted-foreground">Due in 12 days</p>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="mt-2"
-                onClick={() => navigate("/planner")}
-              >
-                Go to Planner
-              </Button>
+              {upcomingSession ? (
+                <div className="p-4 bg-secondary/50 rounded flex flex-col">
+                  <p className="font-medium">{upcomingSession.topic}</p>
+                  <p className="text-sm text-muted-foreground">
+                    Est. {upcomingSession.minutes} minutes
+                  </p>
+                  <Button
+                    onClick={() => navigate("/planner")}
+                    className="mt-2"
+                    size="sm"
+                    variant="secondary"
+                  >
+                    Go to Planner
+                  </Button>
+                </div>
+              ) : (
+                <div className="p-4 bg-secondary/50 rounded">
+                  <p>No study sessions yet.</p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </motion.div>
 
-        {/* quick actions */}
-        <motion.div
-          variants={itemVariants}
-          className="grid gap-6 lg:grid-cols-3"
-        >
+        {/* QUICK ACTIONS */}
+        <motion.div className="grid gap-6 lg:grid-cols-3">
           <Card className="glassmorphic-card lg:col-span-2">
             <CardHeader>
               <CardTitle>Quick Actions</CardTitle>
             </CardHeader>
+
             <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* AI Summarizer */}
               <Dialog>
                 <DialogTrigger asChild>
                   <motion.div
                     whileHover={{ scale: 1.05 }}
-                    className="flex flex-col items-center justify-center p-4 bg-secondary/50 hover:bg-secondary rounded-lg cursor-pointer text-center"
+                    className="p-4 bg-secondary/50 rounded cursor-pointer text-center"
                   >
                     <FileText className="h-8 w-8 text-primary mb-2" />
                     <p className="font-semibold">AI Summarizer</p>
@@ -586,15 +715,12 @@ export default function Dashboard() {
                     </p>
                   </motion.div>
                 </DialogTrigger>
+
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>AI Text Summarizer</DialogTitle>
-                    <DialogDescription>
-                      Paste your text below and let our AI provide a concise
-                      summary.
-                    </DialogDescription>
+                    <DialogTitle>AI Summarizer</DialogTitle>
                   </DialogHeader>
-                  <Textarea placeholder="Paste your text here..." rows={10} />
+                  <Textarea rows={8} placeholder="Paste text..." />
                   <DialogFooter>
                     <Button onClick={() => toast({ title: "Coming soon ✨" })}>
                       Summarize
@@ -603,63 +729,57 @@ export default function Dashboard() {
                 </DialogContent>
               </Dialog>
 
+              {/* Planner */}
               <motion.div
                 whileHover={{ scale: 1.05 }}
+                className="p-4 bg-secondary/50 rounded cursor-pointer text-center"
                 onClick={() => navigate("/planner")}
-                className="flex flex-col items-center justify-center p-4 bg-secondary/50 hover	bg-secondary rounded-lg cursor-pointer text-center"
               >
                 <Calendar className="h-8 w-8 text-primary mb-2" />
                 <p className="font-semibold">View Planner</p>
-                <p className="text-xs text-muted-foreground">
-                  Manage your tasks
-                </p>
               </motion.div>
 
+              {/* Videos */}
               <motion.div
                 whileHover={{ scale: 1.05 }}
+                className="p-4 bg-secondary/50 rounded cursor-pointer text-center"
                 onClick={() => toast({ title: "Coming soon ✨" })}
-                className="flex flex-col items-center justify-center p-4 bg-secondary/50 hover:bg-secondary rounded-lg cursor-pointer text-center"
               >
                 <Video className="h-8 w-8 text-primary mb-2" />
                 <p className="font-semibold">Find Videos</p>
-                <p className="text-xs text-muted-foreground">
-                  Search learning content
-                </p>
               </motion.div>
             </CardContent>
           </Card>
 
+          {/* UPCOMING TASK CARD (STATIC PLACEHOLDER) */}
           <Card className="glassmorphic-card">
             <CardHeader>
               <CardTitle>Upcoming Task</CardTitle>
-              <CardDescription>Due Tomorrow</CardDescription>
+              <CardDescription>From your Planner</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center gap-4 p-4 rounded-lg bg-secondary/50">
-                <div className="w-2 h-2 rounded-full bg-primary mt-1 self-start"></div>
-                <div>
-                  <p className="font-medium">Chapter 5 Quiz</p>
-                  <p className="text-sm text-muted-foreground">History of AI</p>
-                </div>
+              <div className="p-4 bg-secondary/50 rounded">
+                <p>No tasks loaded yet.</p>
               </div>
             </CardContent>
           </Card>
         </motion.div>
 
-        {/* recommended videos */}
-        <motion.div variants={itemVariants}>
+        {/* VIDEOS */}
+        <motion.div>
           <Card className="glassmorphic-card">
             <CardHeader>
               <CardTitle>Recommended Videos</CardTitle>
               <CardDescription>
                 {latestDoc
-                  ? `Based on: ${latestDoc.originalName || latestDoc._id}`
-                  : "Upload a document to get recommendations"}
+                  ? `Based on: ${latestDoc.originalName}`
+                  : "Upload a document to get videos"}
               </CardDescription>
             </CardHeader>
+
             <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {videosLoading ? (
-                <div className="text-sm text-muted-foreground">Loading…</div>
+                <p>Loading...</p>
               ) : videos.length ? (
                 videos.map((v) => (
                   <motion.a
@@ -668,30 +788,24 @@ export default function Dashboard() {
                     href={v.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="bg-secondary/50 p-4 rounded-lg block"
-                    title={v.title}
+                    className="p-4 bg-secondary/50 rounded block"
                   >
-                    <div className="aspect-video rounded-md mb-3 overflow-hidden bg-muted">
-                      {v.thumbnail ? (
+                    <div className="aspect-video rounded mb-2 bg-muted overflow-hidden">
+                      {v.thumbnail && (
                         <img
                           src={v.thumbnail}
-                          alt={v.title}
                           className="w-full h-full object-cover"
                         />
-                      ) : null}
+                      )}
                     </div>
                     <p className="font-semibold line-clamp-2">{v.title}</p>
-                    <div className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                    <p className="text-xs text-muted-foreground line-clamp-1">
                       {v.channelTitle}
-                    </div>
+                    </p>
                   </motion.a>
                 ))
               ) : (
-                <div className="text-sm text-muted-foreground">
-                  {latestDoc
-                    ? "No recommendations yet. Try re-uploading or another document."
-                    : "No videos yet."}
-                </div>
+                <p>No recommendations yet.</p>
               )}
             </CardContent>
           </Card>

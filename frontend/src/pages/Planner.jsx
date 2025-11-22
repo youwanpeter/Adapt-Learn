@@ -1,3 +1,4 @@
+// src/pages/Planner.jsx
 import React from "react";
 import { Helmet } from "react-helmet";
 import { motion } from "framer-motion";
@@ -9,25 +10,26 @@ import {
   CardTitle,
   CardDescription,
 } from "@/components/ui/card";
+import { Calendar as CalendarIcon, Plus, Trash2 } from "lucide-react";
+
 import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { useToast } from "@/components/ui/use-toast";
-import { Plus, Trash2 } from "lucide-react";
 import {
   Dialog,
+  DialogTrigger,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
+  DialogDescription,
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
 
-/* --------------------- helpers --------------------- */
+import { useToast } from "@/components/ui/use-toast";
+
+/* ---------- helpers ---------- */
 const fmtDate = (d) =>
   new Date(d).toLocaleDateString(undefined, {
     year: "numeric",
@@ -53,69 +55,90 @@ const loadProgress = () => {
   }
 };
 
-const saveProgress = (progress) => {
-  localStorage.setItem("studyPlanProgress", JSON.stringify(progress));
+const saveProgress = (p) =>
+  localStorage.setItem("studyPlanProgress", JSON.stringify(p));
+
+const loadTasks = () => {
+  try {
+    const raw = localStorage.getItem("plannerTasks");
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
 };
 
-/* --------------------- component --------------------- */
+const saveTasks = (tasks) =>
+  localStorage.setItem("plannerTasks", JSON.stringify(tasks));
 
-const initialTasks = [];
-
+/* ---------- MAIN COMPONENT ---------- */
 const Planner = () => {
-  const [date, setDate] = React.useState(new Date());
-  const [tasks, setTasks] = React.useState(initialTasks);
-
-  // ------- study plan + progress -------
-  const [plan, setPlan] = React.useState(null); // { sessions: [...], dueDate, pace, ... }
-  const [progress, setProgress] = React.useState({}); // { [sessionId]: boolean }
-
   const { toast } = useToast();
 
-  const showToast = (message = "") => {
+  const [date, setDate] = React.useState(new Date());
+
+  /* sessions (from Study Plan) */
+  const [plan, setPlan] = React.useState(null);
+  const [progress, setProgress] = React.useState({});
+
+  /* custom tasks */
+  const [tasks, setTasks] = React.useState([]);
+
+  const showToast = (msg) => {
     toast({
-      title: "ℹ️ Planner",
-      description: message,
+      title: "Planner",
+      description: msg,
     });
   };
 
-  // Load plan + progress on mount, and whenever localStorage changes
-  const refreshPlan = React.useCallback(() => {
+  /* ---------- load everything on mount ---------- */
+  const refresh = React.useCallback(() => {
     const p = loadPlan();
     setPlan(p);
-    setProgress(loadProgress());
-    if (p) {
+
+    const pr = loadProgress();
+    setProgress(pr);
+
+    const t = loadTasks();
+    setTasks(t);
+
+    if (p)
       showToast(
-        `Loaded study plan: ${
-          p.sessions?.length || 0
-        } session(s), due ${fmtDate(p.dueDate)}`
+        `Loaded Study Plan (${p.sessions?.length || 0} sessions, due ${fmtDate(
+          p.dueDate
+        )})`
       );
-    }
   }, []);
 
   React.useEffect(() => {
-    refreshPlan();
-    const onStorage = (ev) => {
-      if (ev.key === "studyPlan" || ev.key === "studyPlanProgress") {
-        refreshPlan();
+    refresh();
+
+    /* listen for dashboard changes */
+    const onStorage = (e) => {
+      if (
+        e.key === "studyPlan" ||
+        e.key === "studyPlanProgress" ||
+        e.key === "plannerTasks"
+      ) {
+        refresh();
       }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, [refreshPlan]);
+  }, [refresh]);
 
-  // Toggle a session's completion and persist progress
-  const toggleSession = (sessionId) => {
+  /* ---------- session completion ---------- */
+  const toggleSession = (id) => {
     setProgress((curr) => {
-      const next = { ...curr, [sessionId]: !curr[sessionId] };
+      const next = { ...curr, [id]: !curr[id] };
       saveProgress(next);
       return next;
     });
   };
 
   const clearProgress = () => {
-    setProgress({});
     saveProgress({});
-    showToast("Cleared study plan progress.");
+    setProgress({});
+    showToast("Cleared all study progress.");
   };
 
   const removePlan = () => {
@@ -123,47 +146,66 @@ const Planner = () => {
     localStorage.removeItem("studyPlanProgress");
     setPlan(null);
     setProgress({});
-    showToast("Removed saved study plan.");
+    showToast("Removed study plan.");
   };
 
-  // ------------------ existing tasks ------------------
-
-  const handleAddTask = (e) => {
+  /* ---------- custom tasks ---------- */
+  const addTask = (e) => {
     e.preventDefault();
-    const newTaskText = e.target.elements.task.value;
-    if (newTaskText) {
-      setTasks([
-        ...tasks,
-        {
-          id: tasks.length + 1,
-          text: newTaskText,
-          completed: false,
-          dueDate: "Soon",
-        },
-      ]);
-      e.target.reset();
-    }
-    showToast("Task added to local state for now!");
+    const text = e.target.task.value;
+    if (!text) return;
+
+    const newTask = {
+      id: Date.now(),
+      text,
+      completed: false,
+      createdAt: new Date().toISOString(),
+    };
+
+    const next = [...tasks, newTask];
+    setTasks(next);
+    saveTasks(next);
+
+    e.target.reset();
+    showToast("Task added.");
   };
 
   const toggleTask = (id) => {
-    setTasks(
-      tasks.map((task) =>
-        task.id === id ? { ...task, completed: !task.completed } : task
-      )
+    const next = tasks.map((t) =>
+      t.id === id ? { ...t, completed: !t.completed } : t
     );
+    setTasks(next);
+    saveTasks(next);
   };
 
   const deleteTask = (id) => {
-    setTasks(tasks.filter((task) => task.id !== id));
-    showToast("Task removed from local state.");
+    const next = tasks.filter((t) => t.id !== id);
+    setTasks(next);
+    saveTasks(next);
+    showToast("Task removed.");
   };
+
+  /* ---------- group sessions by date ---------- */
+  const sessionsByDate = React.useMemo(() => {
+    if (!plan?.sessions) return {};
+    const map = {};
+    for (const s of plan.sessions) {
+      const key = new Date(s.date).toDateString();
+      if (!map[key]) map[key] = [];
+      map[key].push(s);
+    }
+    return map;
+  }, [plan]);
+
+  const selectedDateKey = date.toDateString();
+  const sessionsForSelectedDate = sessionsByDate[selectedDateKey] || [];
+
+  const daysWithSessions = new Set(Object.keys(sessionsByDate));
 
   return (
     <>
       <Helmet>
         <title>Planner | LearnAI</title>
-        <meta name="description" content="Manage your tasks and schedule." />
       </Helmet>
 
       <motion.div
@@ -171,38 +213,45 @@ const Planner = () => {
         animate={{ opacity: 1 }}
         className="space-y-8"
       >
+        {/* ---------- HEADER ---------- */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold text-white">Your Planner</h1>
             <p className="text-muted-foreground">
-              Organize your study schedule and stay on top of your tasks.
+              Manage your study schedule & personal tasks.
             </p>
           </div>
+
           <div className="flex gap-2">
-            <Button variant="secondary" onClick={refreshPlan}>
-              Reload Plan
+            <Button variant="secondary" onClick={refresh}>
+              Reload
             </Button>
+
+            {/* Add Task */}
             <Dialog>
               <DialogTrigger asChild>
-                <Button className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20">
+                <Button className="bg-primary text-primary-foreground">
                   <Plus className="mr-2 h-4 w-4" /> Add Task
                 </Button>
               </DialogTrigger>
+
               <DialogContent>
-                <form onSubmit={handleAddTask}>
+                <form onSubmit={addTask}>
                   <DialogHeader>
-                    <DialogTitle>Add a new task</DialogTitle>
+                    <DialogTitle>Add a New Task</DialogTitle>
                     <DialogDescription>
-                      What do you need to get done?
+                      What do you need to do?
                     </DialogDescription>
                   </DialogHeader>
-                  <div className="grid gap-4 py-4">
+
+                  <div className="py-4">
                     <Input
-                      id="task"
                       name="task"
-                      placeholder="e.g. Read chapter 7 of Neuroscience"
+                      placeholder="e.g. Finish Chapter 6 notes"
+                      required
                     />
                   </div>
+
                   <DialogFooter>
                     <DialogClose asChild>
                       <Button type="submit">Add Task</Button>
@@ -215,54 +264,48 @@ const Planner = () => {
         </div>
 
         <div className="grid gap-6 lg:grid-cols-3">
-          {/* --------- Task List (your existing list) --------- */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="lg:col-span-2 space-y-6"
-          >
-            {/* Study Plan Sessions */}
+          {/* ---------- LEFT COLUMN (Sessions + Tasks) ---------- */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* ---- Study Sessions ---- */}
             <Card className="glassmorphic-card">
               <CardHeader>
                 <CardTitle>Study Plan Sessions</CardTitle>
                 <CardDescription>
                   {plan
-                    ? `Due ${fmtDate(plan.dueDate)} • Pace: ${plan.pace} • ${
-                        plan.sessions?.length || 0
-                      } session(s)`
-                    : "No saved plan yet. Create one from Dashboard → Topics → Create Study Plan."}
+                    ? `Due ${fmtDate(plan.dueDate)} • ${
+                        plan.sessions.length
+                      } sessions`
+                    : "No study plan found — create one from Dashboard"}
                 </CardDescription>
               </CardHeader>
+
               <CardContent>
-                {plan && plan.sessions?.length ? (
+                {plan?.sessions?.length ? (
                   <div className="space-y-3">
                     {plan.sessions.map((s) => {
-                      const checked = !!progress[s.id];
+                      const done = !!progress[s.id];
                       return (
                         <div
                           key={s.id}
-                          className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg"
+                          className="flex justify-between items-center bg-secondary/40 p-3 rounded-lg"
                         >
                           <div className="flex items-center gap-4">
                             <Checkbox
-                              id={`sess-${s.id}`}
-                              checked={checked}
+                              checked={done}
                               onCheckedChange={() => toggleSession(s.id)}
                             />
                             <div>
-                              <label
-                                htmlFor={`sess-${s.id}`}
-                                className={`font-medium cursor-pointer ${
-                                  checked
+                              <p
+                                className={`font-medium ${
+                                  done
                                     ? "line-through text-muted-foreground"
                                     : ""
                                 }`}
                               >
                                 {s.topic}
-                              </label>
+                              </p>
                               <p className="text-xs text-muted-foreground">
-                                {fmtDate(s.date)} • Est. {s.minutes} min
+                                {fmtDate(s.date)} • {s.minutes} min
                               </p>
                             </div>
                           </div>
@@ -272,7 +315,7 @@ const Planner = () => {
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">
-                    No sessions to show.
+                    No sessions available.
                   </p>
                 )}
 
@@ -289,110 +332,125 @@ const Planner = () => {
               </CardContent>
             </Card>
 
-            {/* Your original personal Task List */}
+            {/* ---- Personal Tasks ---- */}
             <Card className="glassmorphic-card">
               <CardHeader>
                 <CardTitle>Task List</CardTitle>
                 <CardDescription>
-                  You have {tasks.filter((t) => !t.completed).length} pending
-                  tasks.
+                  {tasks.filter((t) => !t.completed).length} pending task(s)
                 </CardDescription>
               </CardHeader>
+
               <CardContent>
-                <div className="space-y-4">
-                  {tasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg"
-                    >
-                      <div className="flex items-center gap-4">
-                        <Checkbox
-                          id={`task-${task.id}`}
-                          checked={task.completed}
-                          onCheckedChange={() => toggleTask(task.id)}
-                        />
-                        <div>
-                          <label
-                            htmlFor={`task-${task.id}`}
-                            className={`font-medium cursor-pointer ${
-                              task.completed
-                                ? "line-through text-muted-foreground"
-                                : ""
-                            }`}
-                          >
-                            {task.text}
-                          </label>
-                          <p className="text-xs text-muted-foreground">
-                            {task.dueDate}
-                          </p>
-                        </div>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => deleteTask(task.id)}
+                <div className="space-y-3">
+                  {tasks.length ? (
+                    tasks.map((task) => (
+                      <div
+                        key={task.id}
+                        className="flex justify-between items-center bg-secondary/40 p-3 rounded-lg"
                       >
-                        <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-                      </Button>
-                    </div>
-                  ))}
+                        <div className="flex items-center gap-4">
+                          <Checkbox
+                            checked={task.completed}
+                            onCheckedChange={() => toggleTask(task.id)}
+                          />
+                          <div>
+                            <p
+                              className={`font-medium ${
+                                task.completed
+                                  ? "line-through text-muted-foreground"
+                                  : ""
+                              }`}
+                            >
+                              {task.text}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {fmtDate(task.createdAt)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => deleteTask(task.id)}
+                        >
+                          <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                        </Button>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No tasks yet.
+                    </p>
+                  )}
                 </div>
               </CardContent>
             </Card>
-          </motion.div>
+          </div>
 
-          {/* --------- Right column (Calendar + Sync) --------- */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="space-y-6"
-          >
+          {/* ---------- RIGHT COLUMN (Calendar) ---------- */}
+          <div className="space-y-6">
             <Card className="glassmorphic-card">
-              <CardContent className="p-2">
+              <CardHeader>
+                <CardTitle>
+                  <CalendarIcon className="h-5 w-5 inline mr-2" />
+                  Calendar
+                </CardTitle>
+              </CardHeader>
+
+              <CardContent>
                 <Calendar
                   mode="single"
                   selected={date}
-                  onSelect={setDate}
-                  className="rounded-md"
+                  onSelect={(d) => d && setDate(d)}
+                  modifiers={{
+                    studyDay: (day) => daysWithSessions.has(day.toDateString()),
+                  }}
+                  modifiersClassNames={{
+                    studyDay:
+                      "bg-primary/40 text-primary-foreground rounded-full",
+                  }}
                 />
+
+                {/* sessions list */}
+                <div className="mt-4 space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Sessions on {fmtDate(date)}:
+                  </p>
+
+                  {sessionsForSelectedDate.length ? (
+                    sessionsForSelectedDate.map((s) => {
+                      const done = !!progress[s.id];
+                      return (
+                        <div
+                          key={s.id}
+                          className="p-3 bg-secondary/40 rounded-lg flex justify-between items-center"
+                        >
+                          <div className="flex items-center gap-3">
+                            <Checkbox
+                              checked={done}
+                              onCheckedChange={() => toggleSession(s.id)}
+                            />
+                            <div>
+                              <p className="text-sm font-medium">{s.topic}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {s.minutes} min
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      No sessions this day.
+                    </p>
+                  )}
+                </div>
               </CardContent>
             </Card>
-            <Card className="glassmorphic-card">
-              <CardHeader>
-                <CardTitle>Calendar Sync</CardTitle>
-                <CardDescription>
-                  Connect your external calendars.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="google-calendar">Google Calendar</Label>
-                  <Switch
-                    id="google-calendar"
-                    onCheckedChange={() =>
-                      toast({
-                        title: "Coming soon ✨",
-                        description: "Calendar sync is not implemented yet.",
-                      })
-                    }
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="outlook-calendar">Microsoft Outlook</Label>
-                  <Switch
-                    id="outlook-calendar"
-                    onCheckedChange={() =>
-                      toast({
-                        title: "Coming soon ✨",
-                        description: "Calendar sync is not implemented yet.",
-                      })
-                    }
-                  />
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
+          </div>
         </div>
       </motion.div>
     </>

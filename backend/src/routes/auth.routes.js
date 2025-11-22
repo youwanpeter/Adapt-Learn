@@ -1,3 +1,4 @@
+// backend/src/routes/auth.routes.js
 import { Router } from "express";
 import { body } from "express-validator";
 import {
@@ -10,11 +11,27 @@ import {
 
 const r = Router();
 
+/* ---------- Common validators ---------- */
+const emailField = body("email")
+  .trim()
+  .isEmail()
+  .withMessage("Valid email required");
+
+const codeField = body("code")
+  .trim()
+  .isLength({ min: 4, max: 8 })
+  .withMessage("Code must be 4–8 digits")
+  .isNumeric()
+  .withMessage("Code must contain only digits");
+
+/* ---------- Routes ---------- */
+
+// REGISTER
 r.post(
   "/register",
   [
-    body("name").notEmpty().withMessage("Name is required"),
-    body("email").isEmail().withMessage("Valid email required"),
+    body("name").trim().notEmpty().withMessage("Name is required"),
+    emailField,
     body("password")
       .isLength({ min: 6 })
       .withMessage("Password must be 6+ chars"),
@@ -22,41 +39,31 @@ r.post(
   register
 );
 
-r.post(
-  "/verify-email",
-  [
-    body("email").isEmail().withMessage("Valid email required"),
-    body("code")
-      .isLength({ min: 4, max: 8 })
-      .withMessage("Code must be 4-8 digits"),
-  ],
-  verifyEmail
-);
+// VERIFY EMAIL
+r.post("/verify-email", [emailField, codeField], verifyEmail);
 
+// LOGIN (step 1)
 r.post(
   "/login",
-  [
-    body("email").isEmail().withMessage("Valid email required"),
-    body("password").notEmpty().withMessage("Password required"),
-  ],
+  [emailField, body("password").notEmpty().withMessage("Password required")],
   login
 );
 
+// LOGIN (step 2 – OTP)
 r.post(
   "/login/verify",
   [
     body("tempToken").notEmpty().withMessage("Session token missing"),
-    body("code")
-      .isLength({ min: 4, max: 8 })
-      .withMessage("Code must be 4-8 digits"),
+    codeField,
   ],
   verifyLogin
 );
 
+// RESEND OTP
 r.post(
   "/resend-otp",
   [
-    body("email").isEmail().withMessage("Valid email required"),
+    emailField,
     body("purpose")
       .isIn(["verify_email", "login"])
       .withMessage("Invalid purpose"),

@@ -1,6 +1,7 @@
 // backend/src/routes/users.routes.js
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
+
 import {
   getMe,
   updateProfile,
@@ -10,6 +11,8 @@ import {
 } from "../controllers/user.controller.js";
 
 const r = Router();
+
+// All user routes require authentication
 r.use(requireAuth);
 
 r.get("/me", getMe);

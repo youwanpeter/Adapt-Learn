@@ -38,6 +38,7 @@ import topicsRoutes from "./routes/topics.routes.js";
 import videosRoutes from "./routes/videos.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import aiRoutes from "./routes/ai.routes.js";
+import otpRoutes from "./routes/otp.routes.js"; //
 
 // -------------------- App setup --------------------
 const app = express();
@@ -87,11 +88,12 @@ app.use("/uploads", express.static(uploadsDir));
 // -------------------- Routes --------------------
 app.use("/api/health", healthRoutes);
 app.use("/api/auth", authRoutes);
-app.use("/api/user", userRoutes);
+app.use("/api/users", userRoutes);
 app.use("/api/documents", docRoutes);
 app.use("/api/topics", topicsRoutes);
 app.use("/api/videos", videosRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/otp", otpRoutes);
 
 // -------------------- 404 + error handler --------------------
 app.use(notFound);
