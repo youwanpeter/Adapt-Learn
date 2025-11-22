@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Search, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +35,32 @@ const sampleNotifications = [
 const Header = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [user, setUser] = useState({});
+
+  // Load user data from localStorage on mount
+  useEffect(() => {
+    const loadUser = () => {
+      try {
+        const storedUser = JSON.parse(localStorage.getItem("user") || "{}");
+        setUser(storedUser);
+      } catch (error) {
+        console.error("Failed to load user from local storage:", error);
+      }
+    };
+
+    loadUser();
+
+    // Listen for changes to localStorage AND our custom "user-updated" event
+    const handleStorageChange = () => loadUser();
+
+    window.addEventListener("storage", handleStorageChange);
+    window.addEventListener("user-updated", handleStorageChange); // ✅ Listen for the event dispatched from Settings
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("user-updated", handleStorageChange);
+    };
+  }, []);
 
   const showToast = () => {
     toast({
@@ -47,10 +73,18 @@ const Header = () => {
   const handleLogout = () => {
     // ✅ Clear token + user
     localStorage.removeItem("accessToken");
+    localStorage.removeItem("token");
     localStorage.removeItem("user");
 
     // ✅ Redirect to login/auth page
     navigate("/auth", { replace: true });
+  };
+
+  // Derive display values
+  const avatarSrc = user.avatarUrl || "https://github.com/shadcn.png";
+  const getInitials = () => {
+    const name = user.name || user.email || "User";
+    return name.substring(0, 2).toUpperCase();
   };
 
   return (
@@ -93,19 +127,25 @@ const Header = () => {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {/* User Profile Dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger>
             <Avatar className="h-9 w-9 cursor-pointer">
-              <AvatarImage src="https://github.com/shadcn.png" alt="@shadcn" />
-              <AvatarFallback>CN</AvatarFallback>
+              <AvatarImage src={avatarSrc} alt={user.name || "@user"} />
+              <AvatarFallback>{getInitials()}</AvatarFallback>
             </Avatar>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuLabel>My Account</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={showToast}>Profile</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/settings")}>
+              Profile
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={showToast}>Billing</DropdownMenuItem>
-            <DropdownMenuItem onClick={showToast}>Settings</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/settings")}>
+              Settings
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleLogout}>Log out</DropdownMenuItem>
           </DropdownMenuContent>

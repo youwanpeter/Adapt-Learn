@@ -44,7 +44,7 @@ export async function genYoutubeQueries(text = "", topics = []) {
     .join("\n");
 
   const prompt = `
-You are a helpful study assistant. Based on the following document summary and topics, produce up to 5 concise YouTube search queries a student would type to learn the same material. Keep each query under 80 characters, specific, and remove duplicates. Return ONLY a JSON array of strings.
+You are a helpful study assistant. Based on the following document summary and topics, produce up to 5 concise YouTube search queries a student would type to find educational content (lectures, tutorials, explanations) on the same material. Keep each query under 80 characters, specific, and remove duplicates. Return ONLY a JSON array of strings.
 
 Document summary (trimmed):
 ${(text || "").slice(0, 1800)}

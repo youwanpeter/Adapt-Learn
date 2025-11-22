@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Helmet } from "react-helmet";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import axios from "axios";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -29,35 +28,15 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { http } from "@/lib/api"; // ✅ Use the shared API client
 
-/* ---------- API client ---------- */
-const resolveApiBase = () => {
-  const raw =
-    (typeof import.meta !== "undefined" &&
-      import.meta.env &&
-      import.meta.env.VITE_API_URL &&
-      String(import.meta.env.VITE_API_URL).trim()) ||
-    "http://localhost:4000";
-  const base = raw.replace(/\/+$/, "");
-  return /\/api$/.test(base) ? base : `${base}/api`;
-};
-const API_BASE = resolveApiBase();
-
-const http = axios.create({ baseURL: API_BASE, timeout: 15000 });
-const authHeader = () => {
-  const token =
-    localStorage.getItem("accessToken") || localStorage.getItem("token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
-};
 const api = {
-  me: () => http.get("/users/me", { headers: authHeader() }),
-  updateProfile: (payload) =>
-    http.patch("/users/me/profile", payload, { headers: authHeader() }),
+  me: () => http.get("/users/me"),
+  updateProfile: (payload) => http.patch("/users/me/profile", payload),
   updateNotifications: (payload) =>
-    http.patch("/users/me/notifications", payload, { headers: authHeader() }),
-  changePassword: (payload) =>
-    http.patch("/users/me/password", payload, { headers: authHeader() }),
-  deleteMe: () => http.delete("/users/me", { headers: authHeader() }),
+    http.patch("/users/me/notifications", payload),
+  changePassword: (payload) => http.patch("/users/me/password", payload),
+  deleteMe: () => http.delete("/users/me"),
 };
 
 const Settings = () => {
@@ -71,7 +50,7 @@ const Settings = () => {
 
   // profile edits (controlled inputs)
   const [name, setName] = useState("");
-  const [email, setEmail] = useState(""); // shown read-only (email change = reverify; out of scope)
+  const [email, setEmail] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
 
   // notification toggles
@@ -119,9 +98,18 @@ const Settings = () => {
   const onSaveProfile = async () => {
     setSaving(true);
     try {
-      await api.updateProfile({ name, avatarUrl });
+      const { data } = await api.updateProfile({ name, avatarUrl });
       toast({ title: "✅ Profile saved" });
-      setMe((m) => ({ ...m, name, avatarUrl }));
+
+      setMe(data); // data is the updated user object
+
+      // ✅ 1. Update Local Storage with new data (avatarUrl, name)
+      const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
+      const updatedUser = { ...currentUser, ...data };
+      localStorage.setItem("user", JSON.stringify(updatedUser));
+
+      // ✅ 2. Dispatch event so Header updates immediately
+      window.dispatchEvent(new Event("user-updated"));
     } catch (err) {
       showErr("Profile save failed", err);
     } finally {
@@ -130,7 +118,6 @@ const Settings = () => {
   };
 
   const onToggleNotif = async (id, checked) => {
-    // optimistic UI
     setMe((m) => ({
       ...m,
       notificationSettings: {
@@ -154,7 +141,6 @@ const Settings = () => {
       toast({ title: "Saved" });
     } catch (err) {
       showErr("Update failed", err);
-      // rollback by refetching
       try {
         const { data } = await api.me();
         setMe(data);
@@ -164,7 +150,6 @@ const Settings = () => {
     }
   };
 
-  // simple prompt-based password change to avoid extra UI
   const onChangePassword = async () => {
     const oldPassword = prompt("Enter current password:");
     if (!oldPassword) return;
@@ -182,11 +167,9 @@ const Settings = () => {
   const onDeleteAccount = async () => {
     try {
       await api.deleteMe();
-      localStorage.removeItem("accessToken");
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
+      localStorage.clear();
       toast({ title: "Account deleted" });
-      navigate("/");
+      navigate("/auth");
     } catch (err) {
       showErr("Delete failed", err);
     }
@@ -212,7 +195,7 @@ const Settings = () => {
         <div>
           <h1 className="text-3xl font-bold text-white">Settings</h1>
           <p className="text-muted-foreground">
-            Manage your account settings and set e-mail preferences.
+            Manage your account settings and preferences.
           </p>
         </div>
 
@@ -248,10 +231,13 @@ const Settings = () => {
                     <Label htmlFor="avatar">Avatar URL</Label>
                     <Input
                       id="avatar"
-                      placeholder="https://…"
+                      placeholder="https://..."
                       value={avatarUrl}
                       onChange={(e) => setAvatarUrl(e.target.value)}
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Paste a direct link to an image (jpg/png).
+                    </p>
                   </div>
                 </div>
 
@@ -267,13 +253,7 @@ const Settings = () => {
 
                 <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    disabled
-                    title="Email changes require re-verification (not enabled here)"
-                  />
+                  <Input id="email" type="email" value={email} disabled />
                 </div>
 
                 <Button onClick={onSaveProfile} disabled={saving || loading}>
@@ -321,14 +301,13 @@ const Settings = () => {
                   </Button>
                 </div>
 
-                <Card className="border-destructive/50">
+                <Card className="border-destructive/50 bg-destructive/5">
                   <CardHeader>
                     <CardTitle className="text-destructive">
                       Delete Account
                     </CardTitle>
                     <CardDescription>
-                      Permanently delete your account and all associated data.
-                      This action cannot be undone.
+                      Permanently delete your account and all data.
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
@@ -348,7 +327,10 @@ const Settings = () => {
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                           <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction onClick={onDeleteAccount}>
+                          <AlertDialogAction
+                            onClick={onDeleteAccount}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          >
                             Continue
                           </AlertDialogAction>
                         </AlertDialogFooter>

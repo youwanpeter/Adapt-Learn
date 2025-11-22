@@ -1,3 +1,4 @@
+// backend/src/services/youtube.service.js
 import axios from "axios";
 
 const YT_ENDPOINT = "https://www.googleapis.com/youtube/v3/search";
@@ -11,6 +12,12 @@ export async function searchYoutube(query) {
   const key = process.env.YOUTUBE_API_KEY;
   if (!key) return [];
 
+  // Temporarily removing the publishedAfter filter to ensure results return.
+  // The AI prompt is still configured to search for educational content, which should maintain relevance.
+  // const oneYearAgo = new Date();
+  // oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  // const publishedAfter = oneYearAgo.toISOString();
+
   const { data } = await axios.get(YT_ENDPOINT, {
     params: {
       key,
@@ -21,6 +28,7 @@ export async function searchYoutube(query) {
       regionCode: REGION,
       safeSearch: "moderate",
       relevanceLanguage: "en",
+      // publishedAfter: publishedAfter, // Re-enabled the filter by commenting this out
       // order: "relevance", // default
     },
     timeout: 12000,

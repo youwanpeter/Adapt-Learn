@@ -1,7 +1,4 @@
-// =============================================
-// Dashboard.jsx — Fully Fixed & Clean Version
-// =============================================
-
+// src/pages/Dashboard.jsx
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { Helmet } from "react-helmet";
 import { motion } from "framer-motion";
@@ -47,20 +44,18 @@ const itemVariants = {
   visible: { y: 0, opacity: 1, transition: { type: "spring", stiffness: 100 } },
 };
 
-/* Helpers */
+/* tiny date helpers */
 const fmtDate = (d) =>
   new Date(d).toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
   });
-
 const addDays = (d, n) => {
   const nd = new Date(d);
   nd.setDate(nd.getDate() + n);
   return nd;
 };
-
 const daysDiff = (a, b) =>
   Math.max(
     0,
@@ -70,22 +65,38 @@ const daysDiff = (a, b) =>
     )
   );
 
+/* planner helpers imported from Planner.jsx concept */
+const loadPlan = () => {
+  try {
+    const raw = localStorage.getItem("studyPlan");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+const loadProgress = () => {
+  try {
+    const raw = localStorage.getItem("studyPlanProgress");
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+};
+// Helper end
+
 export default function Dashboard() {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  /* Auth header */
+  /* auth header */
   const token =
     localStorage.getItem("accessToken") || localStorage.getItem("token");
-
   const authHeader = useMemo(
     () => (token ? { Authorization: `Bearer ${token}` } : {}),
     [token]
   );
 
-  /* -----------------------------------------
-     USER NAME
-  ------------------------------------------ */
+  /* 🔹 USER NAME (new) */
   const [userName, setUserName] = useState(() => {
     try {
       const u = JSON.parse(localStorage.getItem("user") || "null");
@@ -94,7 +105,6 @@ export default function Dashboard() {
       return "";
     }
   });
-
   const firstNameOf = (s) => {
     if (!s) return "";
     const raw = String(s).trim();
@@ -103,10 +113,10 @@ export default function Dashboard() {
     return raw;
   };
 
-  // Fetch user if needed
+  // try to fetch user if not cached
   useEffect(() => {
     if (!token) return;
-    if (userName && userName.length > 1) return;
+    if (userName && userName.length > 1) return; // already have name
 
     (async () => {
       try {
@@ -117,10 +127,8 @@ export default function Dashboard() {
           });
 
         let data = null;
-
         let r = await tryMe("/auth/me");
         if (r.status === 200) data = r.data;
-
         if (!data) {
           r = await tryMe("/users/me");
           if (r.status === 200) data = r.data;
@@ -142,21 +150,24 @@ export default function Dashboard() {
             );
           }
         }
-      } catch {}
+      } catch {
+        /* non-critical */
+      }
     })();
   }, [token, authHeader, userName]);
 
-  /* -----------------------------------------
-     TOPICS + DOCUMENTS
-  ------------------------------------------ */
+  // New states for local study plan
+  const [localPlan, setLocalPlan] = useState(null);
+  const [localProgress, setLocalProgress] = useState({});
+
+  /* topics */
   const [topicsLoading, setTopicsLoading] = useState(false);
   const [latestDoc, setLatestDoc] = useState(null);
   const [topics, setTopics] = useState([]);
   const [topicsOpen, setTopicsOpen] = useState(false);
 
-  /* -----------------------------------------
-     VIDEOS
-  ------------------------------------------ */
+  /* videos */
+  // Initialized to empty array now to prevent static content.
   const [videos, setVideos] = useState([]);
   const [videosLoading, setVideosLoading] = useState(false);
 
@@ -167,17 +178,16 @@ export default function Dashboard() {
       setVideos([]);
       return;
     }
-
     setTopicsLoading(true);
-
     try {
+      // newest first assumed by your /documents/mine endpoint
       const { data: docs } = await http.get("/documents/mine", {
         headers: authHeader,
       });
-
       const latest = Array.isArray(docs) && docs.length ? docs[0] : null;
+
       setLatestDoc(latest);
-      setVideos([]);
+      setVideos([]); // reset while loading
 
       if (!latest) {
         setTopics([]);
@@ -187,197 +197,117 @@ export default function Dashboard() {
       const { data: t } = await http.get(`/topics/by-document/${latest._id}`, {
         headers: authHeader,
       });
-
       setTopics(Array.isArray(t) ? t : t?.topics || []);
     } catch (e) {
+      const msg =
+        e?.response?.data?.message || e?.message || "Failed to load topics.";
+      setLatestDoc(null);
+      setTopics([]);
+      setVideos([]);
       toast({
         title: "Couldn’t load topics",
-        description: e?.response?.data?.message || e?.message,
+        description: msg,
         variant: "destructive",
       });
-      setTopics([]);
     } finally {
       setTopicsLoading(false);
     }
   }, [authHeader, token, toast]);
 
+  // Add local storage watcher for study plan (from Planner.jsx concept)
+  const refreshLocalPlan = useCallback(() => {
+    setLocalPlan(loadPlan());
+    setLocalProgress(loadProgress());
+  }, []);
+
+  /* initial load + refresh on upload/storage change */
   useEffect(() => {
     fetchLatestDocAndTopics();
-  }, [fetchLatestDocAndTopics]);
+    refreshLocalPlan();
 
+    const onNewDoc = () => {
+      setLatestDoc(null);
+      setTopics([]);
+      setVideos([]);
+      fetchLatestDocAndTopics();
+    };
+
+    // Handler to check for both document uploads and study plan changes
+    const onStorage = (ev) => {
+      if (ev.key === "lastUploadedDocId") onNewDoc();
+      if (ev.key === "studyPlan" || ev.key === "studyPlanProgress") {
+        refreshLocalPlan();
+      }
+    };
+
+    window.addEventListener("last-uploaded-doc", onNewDoc);
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      window.removeEventListener("last-uploaded-doc", onNewDoc);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [fetchLatestDocAndTopics, refreshLocalPlan]);
+
+  /* fetch video recs only when we have a doc id */
   const fetchVideos = useCallback(
-    async (id) => {
-      if (!id) return setVideos([]);
+    async (docId) => {
+      if (!docId || !token) {
+        setVideos([]);
+        return;
+      }
       setVideosLoading(true);
       try {
-        const { data } = await http.get(`/videos/by-document/${id}`, {
+        const { data } = await http.get(`/videos/by-document/${docId}`, {
           headers: authHeader,
-          validateStatus: (s) => s === 200 || s === 404,
+          validateStatus: (s) => s === 200 || s === 404, // treat 404 as empty
         });
         setVideos(Array.isArray(data) ? data : []);
       } catch {
-        setVideos([]);
+        setVideos([]); // non-critical
       } finally {
         setVideosLoading(false);
       }
     },
-    [authHeader]
+    [authHeader, token]
   );
 
   useEffect(() => {
     if (latestDoc?._id) fetchVideos(latestDoc._id);
-  }, [latestDoc, fetchVideos]);
+  }, [latestDoc?._id, fetchVideos]);
 
-  /* -----------------------------------------
-     STUDY PLAN + TOPIC SELECTION
-  ------------------------------------------ */
+  /* ===== Study planner UI logic ===== */
   const [selected, setSelected] = useState({});
   const [pace, setPace] = useState("moderate");
-  const [dueDate, setDueDate] = useState(
+  const [dueDate, setDueDate] = useState(() =>
     addDays(new Date(), 7).toISOString().slice(0, 10)
   );
   const [sessions, setSessions] = useState([]);
   const [generating, setGenerating] = useState(false);
-  const [upcomingSession, setUpcomingSession] = useState(null);
 
-  /* Progress stats */
-  const [studyStats, setStudyStats] = useState({ completed: 0, total: 0 });
-  const [plannerStats, setPlannerStats] = useState({ completed: 0, total: 0 });
-  const [hybridProgress, setHybridProgress] = useState(0);
-
-  /* Load saved study plan */
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("studyPlan");
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      if (Array.isArray(saved.sessions)) setSessions(saved.sessions);
-    } catch {}
-  }, []);
-
-  /* Load planner tasks */
-  useEffect(() => {
-    try {
-      const raw =
-        localStorage.getItem("plannerTasks") || localStorage.getItem("tasks");
-
-      if (!raw) return;
-
-      const arr = JSON.parse(raw);
-      if (!Array.isArray(arr)) return;
-
-      const total = arr.length;
-      const completed = arr.filter(
-        (t) => t.completed || t.done || t.checked
-      ).length;
-
-      setPlannerStats({ completed, total });
-    } catch {}
-  }, []);
-
-  /* Study session completion stats */
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("studyPlan");
-      const saved = raw ? JSON.parse(raw) : null;
-
-      const allSessions = sessions.length
-        ? sessions
-        : Array.isArray(saved?.sessions)
-        ? saved.sessions
-        : [];
-
-      if (!allSessions.length) {
-        setStudyStats({ completed: 0, total: 0 });
-        return;
-      }
-
-      // FIXED: JS only (NO TYPESCRIPT)
-      const completedIds = new Set(
-        saved?.completedSessionIds || saved?.completed || []
-      );
-
-      const completed = allSessions.filter(
-        (s) => s.completed || s.done || completedIds.has(s.id)
-      ).length;
-
-      setStudyStats({ completed, total: allSessions.length });
-    } catch {
-      setStudyStats({ completed: 0, total: 0 });
-    }
-  }, [sessions]);
-
-  /* Upcoming session */
-  useEffect(() => {
-    if (!sessions.length) {
-      setUpcomingSession(null);
-      return;
-    }
-    const today = new Date().setHours(0, 0, 0, 0);
-    const sorted = [...sessions].sort(
-      (a, b) => new Date(a.date) - new Date(b.date)
-    );
-    const next =
-      sorted.find((s) => new Date(s.date).setHours(0, 0, 0, 0) >= today) ||
-      sorted[0];
-    setUpcomingSession(next || null);
-  }, [sessions]);
-
-  /* Hybrid progress */
-  useEffect(() => {
-    const topicTotal = topics.length;
-    const topicCompleted = Object.values(selected).filter(Boolean).length;
-
-    const ratios = [];
-
-    if (studyStats.total) ratios.push(studyStats.completed / studyStats.total);
-
-    if (plannerStats.total)
-      ratios.push(plannerStats.completed / plannerStats.total);
-
-    if (topicTotal) ratios.push(topicCompleted / topicTotal);
-
-    const avg =
-      ratios.length === 0
-        ? 0
-        : ratios.reduce((a, b) => a + b, 0) / ratios.length;
-
-    setHybridProgress(Math.round(avg * 100));
-  }, [studyStats, plannerStats, topics.length, selected]);
-
-  /* Toggle topic selection */
   const toggleTopic = (id) => setSelected((s) => ({ ...s, [id]: !s[id] }));
-
-  /* Generate study sessions */
+  const allSelectedTopics = topics.filter((t) => selected[t._id || t.title]);
   const estimateMinutes = (t) => {
-    const words = (t?.summary || "").split(/\s+/).length;
-    let base = 25 + Math.min(35, Math.floor(words / 20));
-    const factor = pace === "fast" ? 0.7 : pace === "slow" ? 1.3 : 1;
+    const words = (t?.summary || "").split(/\s+/).filter(Boolean).length;
+    let base = 25 + Math.min(35, Math.floor(words / 20)); // 25–60
+    const factor = pace === "fast" ? 0.75 : pace === "slow" ? 1.3 : 1.0;
     return Math.max(10, Math.round(base * factor));
   };
-
   const generatePlan = () => {
-    const chosen = topics.filter((t) => selected[t._id || t.title]);
-    if (!chosen.length)
-      return toast({
-        title: "Pick at least one topic",
-        variant: "destructive",
-      });
-
+    if (!allSelectedTopics.length) {
+      toast({ title: "Pick at least one topic", variant: "destructive" });
+      return;
+    }
     const start = new Date();
     const end = new Date(dueDate);
-    if (Number.isNaN(end.getTime()))
-      return toast({
-        title: "Select a valid due date",
-        variant: "destructive",
-      });
-
+    if (Number.isNaN(end.getTime())) {
+      toast({ title: "Select a valid due date", variant: "destructive" });
+      return;
+    }
     setGenerating(true);
-
     const spanDays = Math.max(1, daysDiff(start, end) + 1);
-
-    const out = chosen.map((t, i) => {
-      const dayIndex = Math.floor((i * spanDays) / chosen.length);
+    const out = allSelectedTopics.map((t, i) => {
+      const dayIndex = Math.floor((i * spanDays) / allSelectedTopics.length);
       const date = addDays(start, dayIndex);
       return {
         id: `${t._id || t.title}::${i}`,
@@ -387,39 +317,73 @@ export default function Dashboard() {
         minutes: estimateMinutes(t),
       };
     });
-
     setSessions(out);
     setGenerating(false);
   };
-
-  /* Save study plan */
   const savePlan = () => {
-    const chosen = topics.filter((t) => selected[t._id || t.title]);
-
     const payload = {
       createdAt: new Date().toISOString(),
       dueDate,
       pace,
       sessions,
       sourceDocument: latestDoc?._id || null,
-      topics: chosen.map((t) => t.title || t.name),
+      topics: allSelectedTopics.map((t) => t.title || t.name),
     };
-
     localStorage.setItem("studyPlan", JSON.stringify(payload));
-
     toast({
-      title: "Study plan saved",
+      title: "Study plan saved ✅",
       description: `Sessions: ${sessions.length}`,
     });
+    setTopicsOpen(false);
   };
 
-  /* Topic stats */
-  const topicCompletedCount = Object.values(selected).filter(Boolean).length;
-  const topicTotalCount = topics.length;
+  // Calculate dynamic dashboard stats
+  const progressStats = useMemo(() => {
+    if (!localPlan || !localPlan.sessions?.length) {
+      return {
+        percent: 0,
+        nextTask: null,
+        daysLeft: 0,
+        totalSessions: 0,
+        completedSessions: 0,
+      };
+    }
 
-  /* -----------------------------------------
-     RENDER
-  ------------------------------------------ */
+    const total = localPlan.sessions.length;
+    const completed = localPlan.sessions.filter(
+      (s) => !!localProgress[s.id]
+    ).length;
+    const percent = Math.round((completed / total) * 100);
+
+    const now = new Date();
+    // Set hours to 0 for accurate comparison against session dates saved as ISO strings
+    now.setHours(0, 0, 0, 0);
+
+    const nextTask = localPlan.sessions
+      // Only show non-completed sessions that are due today or in the future
+      .filter((s) => !localProgress[s.id] && new Date(s.date) >= now)
+      .sort((a, b) => new Date(a.date) - new Date(b.date))[0];
+
+    // Days left calculation based on the next task
+    let daysLeft = 0;
+    if (nextTask) {
+      // Use the daysDiff helper to correctly calculate calendar days left
+      daysLeft = daysDiff(new Date(), new Date(nextTask.date));
+    }
+
+    return {
+      percent,
+      totalSessions: total,
+      completedSessions: completed,
+      nextTask,
+      daysLeft,
+    };
+  }, [localPlan, localProgress]);
+
+  const { percent, completedSessions, totalSessions, nextTask, daysLeft } =
+    progressStats;
+
+  const showToast = () => toast({ title: "Coming soon ✨" });
 
   return (
     <>
@@ -433,7 +397,7 @@ export default function Dashboard() {
         animate="visible"
         className="space-y-8"
       >
-        {/* HEADER */}
+        {/* header */}
         <motion.div
           variants={itemVariants}
           className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4"
@@ -446,75 +410,55 @@ export default function Dashboard() {
               Let's make today a productive one.
             </p>
           </div>
-
           <Button
             onClick={() => navigate("/upload")}
-            className="bg-primary text-primary-foreground"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20"
           >
             <FilePlus2 className="mr-2 h-4 w-4" /> Upload Document
           </Button>
         </motion.div>
 
-        {/* ---------- PROGRESS SECTION ---------- */}
+        {/* progress + topics */}
         <motion.div
           variants={itemVariants}
           className="grid gap-6 md:grid-cols-2 lg:grid-cols-3"
         >
-          {/* HYBRID PROGRESS CARD */}
+          {/* 1. OVERALL PROGRESS CARD */}
           <Card className="glassmorphic-card">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle>Overall Progress</CardTitle>
               <Zap className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
-
             <CardContent>
-              <div className="text-2xl font-bold">{hybridProgress}%</div>
-              <p className="text-xs text-muted-foreground">
-                Based on Study Sessions, Planner Tasks & Topic Reviews.
-              </p>
-
-              <div className="mt-3 text-[11px] text-muted-foreground space-y-1">
-                <div>
-                  Study Plan:{" "}
-                  <span className="font-medium">
-                    {studyStats.completed}/{studyStats.total}
-                  </span>
-                </div>
-                <div>
-                  Planner Tasks:{" "}
-                  <span className="font-medium">
-                    {plannerStats.completed}/{plannerStats.total}
-                  </span>
-                </div>
-                <div>
-                  Topics Reviewed:{" "}
-                  <span className="font-medium">
-                    {topicCompletedCount}/{topicTotalCount}
-                  </span>
-                </div>
+              <div className="text-2xl font-bold">
+                {localPlan ? `${percent}%` : "—"}
               </div>
-
-              <Progress value={hybridProgress} className="mt-4 h-2" />
+              <p className="text-xs text-muted-foreground">
+                {localPlan
+                  ? `${completedSessions} of ${totalSessions} sessions complete`
+                  : "No active study plan. Create one to track progress."}
+              </p>
+              <Progress value={percent} className="mt-4 h-2" />
             </CardContent>
           </Card>
 
-          {/* TOPICS CARD */}
           <Card className="glassmorphic-card">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle>Topics to Review</CardTitle>
               <Lightbulb className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
-
             <CardContent>
               <div className="text-2xl font-bold">
                 {topicsLoading ? "—" : topics.length}
               </div>
               <p className="text-xs text-muted-foreground">
                 {topicsLoading
-                  ? "Loading..."
+                  ? "Loading from your latest document..."
                   : latestDoc
                   ? `From: ${latestDoc.originalName || latestDoc._id}`
-                  : "Upload a document to see topics"}
+                  : token
+                  ? "Upload a document to see extracted topics"
+                  : "Sign in to view topics"}
               </p>
 
               <Dialog open={topicsOpen} onOpenChange={setTopicsOpen}>
@@ -530,45 +474,56 @@ export default function Dashboard() {
 
                 <DialogContent>
                   <DialogHeader>
+                    {/* FIX: Corrected closing tag for DialogTitle */}
                     <DialogTitle>Extracted Topics</DialogTitle>
                     <DialogDescription>
-                      {latestDoc?.originalName}
+                      {latestDoc
+                        ? latestDoc.originalName || latestDoc._id
+                        : "Latest document"}
                     </DialogDescription>
                   </DialogHeader>
 
-                  <div className="max-h-80 overflow-auto space-y-2">
-                    {topicsLoading ? (
-                      <p>Loading…</p>
-                    ) : topics.length ? (
-                      topics.map((t) => {
+                  {topicsLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading…</p>
+                  ) : topics.length ? (
+                    <ul className="space-y-2 max-h-80 overflow-auto">
+                      {topics.map((t) => {
                         const id = t._id || t.title;
                         return (
-                          <div
+                          <li
                             key={id}
-                            className="p-3 rounded bg-secondary/50 flex justify-between"
+                            className="p-3 rounded-md bg-secondary/50"
                           >
-                            <div>
-                              <p className="font-medium">{t.title}</p>
-                              {t.summary && (
-                                <p className="text-xs text-muted-foreground line-clamp-3">
-                                  {t.summary}
-                                </p>
-                              )}
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="font-medium text-sm">
+                                  {t.title || t.name}
+                                </div>
+                                {t.summary && (
+                                  <div className="text-xs text-muted-foreground mt-1 line-clamp-3">
+                                    {t.summary}
+                                  </div>
+                                )}
+                              </div>
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 ml-3"
+                                checked={!!selected[id]}
+                                onChange={() => toggleTopic(id)}
+                                title="Include in study plan"
+                              />
                             </div>
-                            <input
-                              type="checkbox"
-                              checked={!!selected[id]}
-                              onChange={() => toggleTopic(id)}
-                            />
-                          </div>
+                          </li>
                         );
-                      })
-                    ) : (
-                      <p>No topics found.</p>
-                    )}
-                  </div>
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No topics found.
+                    </p>
+                  )}
 
-                  <DialogFooter className="mt-3 flex justify-between">
+                  <DialogFooter className="flex flex-col sm:flex-row sm:justify-between gap-2">
                     <Button
                       variant="secondary"
                       onClick={fetchLatestDocAndTopics}
@@ -582,71 +537,91 @@ export default function Dashboard() {
                           📅 Create Study Plan
                         </Button>
                       </DialogTrigger>
-
                       <DialogContent className="max-w-xl">
                         <DialogHeader>
                           <DialogTitle>Create Study Plan</DialogTitle>
+                          <DialogDescription>
+                            Choose pace & due date. We’ll generate sessions with
+                            estimated minutes.
+                          </DialogDescription>
                         </DialogHeader>
 
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
-                            <label>Study Pace</label>
+                            <label className="text-sm font-medium">
+                              Study Pace
+                            </label>
                             <select
-                              className="w-full p-2 rounded bg-background border"
+                              className="w-full p-2 mt-1 rounded bg-background border"
                               value={pace}
                               onChange={(e) => setPace(e.target.value)}
                             >
-                              <option value="fast">Fast</option>
-                              <option value="moderate">Moderate</option>
-                              <option value="slow">Slow</option>
+                              <option value="fast">
+                                Fast (shorter sessions)
+                              </option>
+                              <option value="moderate">
+                                Moderate (default)
+                              </option>
+                              <option value="slow">Slow (deeper study)</option>
                             </select>
                           </div>
-
                           <div>
-                            <label>Due Date</label>
+                            <label className="text-sm font-medium">
+                              Due Date
+                            </label>
                             <input
                               type="date"
+                              className="w-full p-2 mt-1 rounded bg-background border"
                               value={dueDate}
                               onChange={(e) => setDueDate(e.target.value)}
-                              className="w-full p-2 rounded bg-background border"
+                              min={new Date().toISOString().slice(0, 10)}
                             />
                           </div>
                         </div>
 
-                        <div className="flex gap-2 mt-3">
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Selected topics: {allSelectedTopics.length} /{" "}
+                          {topics.length}
+                        </p>
+
+                        <div className="flex items-center gap-2 mt-2">
                           <Button
                             onClick={generatePlan}
-                            disabled={!Object.values(selected).includes(true)}
+                            disabled={generating || !allSelectedTopics.length}
                           >
-                            Generate
+                            {generating ? "Generating…" : "Generate Plan"}
                           </Button>
                           <Button
                             variant="secondary"
-                            onClick={savePlan}
                             disabled={!sessions.length}
+                            onClick={savePlan}
                           >
-                            Save
+                            {sessions.length ? "Save Plan" : "Generate first"}
                           </Button>
                         </div>
 
-                        <div className="max-h-64 overflow-auto mt-4 space-y-2">
+                        <div className="mt-4 max-h-64 overflow-auto space-y-2">
                           {sessions.length ? (
                             sessions.map((s) => (
                               <div
                                 key={s.id}
-                                className="p-3 rounded bg-secondary/50 flex justify-between"
+                                className="p-3 rounded bg-secondary/50 text-sm flex justify-between"
                               >
-                                <div>
-                                  <p className="font-medium">{s.topic}</p>
-                                  <p className="text-xs text-muted-foreground">
+                                <div className="pr-3">
+                                  <div className="font-medium">{s.topic}</div>
+                                  <div className="text-xs text-muted-foreground">
                                     Est. {s.minutes} min
-                                  </p>
+                                  </div>
                                 </div>
-                                <p className="text-xs">{s.dateLabel}</p>
+                                <div className="text-xs">{s.dateLabel}</div>
                               </div>
                             ))
                           ) : (
-                            <p>No sessions yet.</p>
+                            <p className="text-xs text-muted-foreground">
+                              No sessions yet — pick topics and click{" "}
+                              <span className="font-medium">Generate Plan</span>
+                              .
+                            </p>
                           )}
                         </div>
                       </DialogContent>
@@ -657,56 +632,62 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          {/* UPCOMING SESSION */}
+          {/* NEXT MILESTONE CARD */}
           <Card className="glassmorphic-card md:col-span-2 lg:col-span-1">
-            <CardHeader>
-              <CardTitle>Upcoming Study Session</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle>Next Milestone</CardTitle>
               <CardDescription>
-                {upcomingSession
-                  ? `On ${fmtDate(upcomingSession.date)}`
-                  : "No upcoming sessions"}
+                {nextTask
+                  ? `Due in ${daysLeft} ${daysLeft === 1 ? "day" : "days"}`
+                  : localPlan &&
+                    totalSessions > 0 &&
+                    completedSessions === totalSessions
+                  ? "Plan Complete!"
+                  : "No pending tasks"}
               </CardDescription>
             </CardHeader>
-
             <CardContent>
-              {upcomingSession ? (
-                <div className="p-4 bg-secondary/50 rounded flex flex-col">
-                  <p className="font-medium">{upcomingSession.topic}</p>
-                  <p className="text-sm text-muted-foreground">
-                    Est. {upcomingSession.minutes} minutes
-                  </p>
-                  <Button
-                    onClick={() => navigate("/planner")}
-                    className="mt-2"
-                    size="sm"
-                    variant="secondary"
-                  >
-                    Go to Planner
-                  </Button>
-                </div>
-              ) : (
-                <div className="p-4 bg-secondary/50 rounded">
-                  <p>No study sessions yet.</p>
-                </div>
-              )}
+              <div className="font-bold">
+                {nextTask
+                  ? nextTask.topic
+                  : localPlan &&
+                    totalSessions > 0 &&
+                    completedSessions === totalSessions
+                  ? "Time to relax 🎉"
+                  : "Start a new Study Plan"}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {nextTask
+                  ? `Session on ${fmtDate(nextTask.date)}`
+                  : "Create a plan from the Topics section"}
+              </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="mt-2"
+                onClick={() => navigate("/planner")}
+              >
+                Go to Planner
+              </Button>
             </CardContent>
           </Card>
         </motion.div>
 
-        {/* QUICK ACTIONS */}
-        <motion.div className="grid gap-6 lg:grid-cols-3">
+        {/* quick actions */}
+        <motion.div
+          variants={itemVariants}
+          className="grid gap-6 lg:grid-cols-3"
+        >
           <Card className="glassmorphic-card lg:col-span-2">
             <CardHeader>
               <CardTitle>Quick Actions</CardTitle>
             </CardHeader>
-
             <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {/* AI Summarizer */}
               <Dialog>
                 <DialogTrigger asChild>
                   <motion.div
                     whileHover={{ scale: 1.05 }}
-                    className="p-4 bg-secondary/50 rounded cursor-pointer text-center"
+                    className="flex flex-col items-center justify-center p-4 bg-secondary/50 hover:bg-secondary rounded-lg cursor-pointer text-center"
                   >
                     <FileText className="h-8 w-8 text-primary mb-2" />
                     <p className="font-semibold">AI Summarizer</p>
@@ -715,12 +696,15 @@ export default function Dashboard() {
                     </p>
                   </motion.div>
                 </DialogTrigger>
-
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>AI Summarizer</DialogTitle>
+                    <DialogTitle>AI Text Summarizer</DialogTitle>
+                    <DialogDescription>
+                      Paste your text below and let our AI provide a concise
+                      summary.
+                    </DialogDescription>
                   </DialogHeader>
-                  <Textarea rows={8} placeholder="Paste text..." />
+                  <Textarea placeholder="Paste your text here..." rows={10} />
                   <DialogFooter>
                     <Button onClick={() => toast({ title: "Coming soon ✨" })}>
                       Summarize
@@ -729,57 +713,81 @@ export default function Dashboard() {
                 </DialogContent>
               </Dialog>
 
-              {/* Planner */}
               <motion.div
                 whileHover={{ scale: 1.05 }}
-                className="p-4 bg-secondary/50 rounded cursor-pointer text-center"
                 onClick={() => navigate("/planner")}
+                className="flex flex-col items-center justify-center p-4 bg-secondary/50 hover	bg-secondary rounded-lg cursor-pointer text-center"
               >
                 <Calendar className="h-8 w-8 text-primary mb-2" />
                 <p className="font-semibold">View Planner</p>
+                <p className="text-xs text-muted-foreground">
+                  Manage your tasks
+                </p>
               </motion.div>
 
-              {/* Videos */}
               <motion.div
                 whileHover={{ scale: 1.05 }}
-                className="p-4 bg-secondary/50 rounded cursor-pointer text-center"
                 onClick={() => toast({ title: "Coming soon ✨" })}
+                className="flex flex-col items-center justify-center p-4 bg-secondary/50 hover:bg-secondary rounded-lg cursor-pointer text-center"
               >
                 <Video className="h-8 w-8 text-primary mb-2" />
                 <p className="font-semibold">Find Videos</p>
+                <p className="text-xs text-muted-foreground">
+                  Search learning content
+                </p>
               </motion.div>
             </CardContent>
           </Card>
 
-          {/* UPCOMING TASK CARD (STATIC PLACEHOLDER) */}
+          {/* UPCOMING TASK CARD */}
           <Card className="glassmorphic-card">
             <CardHeader>
               <CardTitle>Upcoming Task</CardTitle>
-              <CardDescription>From your Planner</CardDescription>
+              <CardDescription>
+                {nextTask
+                  ? `Due ${
+                      daysLeft === 0
+                        ? "Today"
+                        : daysLeft === 1
+                        ? "Tomorrow"
+                        : `in ${daysLeft} days`
+                    }`
+                  : "No immediate tasks"}
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="p-4 bg-secondary/50 rounded">
-                <p>No tasks loaded yet.</p>
+              <div className="flex items-center gap-4 p-4 rounded-lg bg-secondary/50">
+                <div className="w-2 h-2 rounded-full bg-primary mt-1 self-start"></div>
+                <div>
+                  <p className="font-medium">
+                    {nextTask ? nextTask.topic : "No Active Session"}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {nextTask
+                      ? `Study Session on ${fmtDate(nextTask.date)}`
+                      : "Create a Study Plan to add tasks."}
+                  </p>
+                </div>
               </div>
             </CardContent>
           </Card>
         </motion.div>
 
-        {/* VIDEOS */}
-        <motion.div>
+        {/* recommended videos */}
+        <motion.div variants={itemVariants}>
           <Card className="glassmorphic-card">
             <CardHeader>
               <CardTitle>Recommended Videos</CardTitle>
               <CardDescription>
                 {latestDoc
-                  ? `Based on: ${latestDoc.originalName}`
-                  : "Upload a document to get videos"}
+                  ? `Based on: ${latestDoc.originalName || latestDoc._id}`
+                  : "Upload a document to get recommendations"}
               </CardDescription>
             </CardHeader>
-
+            {/* The only logic inside CardContent now is dynamic. If videos.length is 0, it shows "No videos yet." */}
             <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {videosLoading ? (
-                <p>Loading...</p>
+                <div className="text-sm text-muted-foreground">Loading…</div>
               ) : videos.length ? (
                 videos.map((v) => (
                   <motion.a
@@ -788,24 +796,30 @@ export default function Dashboard() {
                     href={v.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="p-4 bg-secondary/50 rounded block"
+                    className="bg-secondary/50 p-4 rounded-lg block"
+                    title={v.title}
                   >
-                    <div className="aspect-video rounded mb-2 bg-muted overflow-hidden">
-                      {v.thumbnail && (
+                    <div className="aspect-video rounded-md mb-3 overflow-hidden bg-muted">
+                      {v.thumbnail ? (
                         <img
                           src={v.thumbnail}
+                          alt={v.title}
                           className="w-full h-full object-cover"
                         />
-                      )}
+                      ) : null}
                     </div>
                     <p className="font-semibold line-clamp-2">{v.title}</p>
-                    <p className="text-xs text-muted-foreground line-clamp-1">
+                    <div className="text-xs text-muted-foreground mt-1 line-clamp-1">
                       {v.channelTitle}
-                    </p>
+                    </div>
                   </motion.a>
                 ))
               ) : (
-                <p>No recommendations yet.</p>
+                <div className="text-sm text-muted-foreground">
+                  {latestDoc
+                    ? "No recommendations yet. Try re-uploading or another document."
+                    : "No videos yet."}
+                </div>
               )}
             </CardContent>
           </Card>
